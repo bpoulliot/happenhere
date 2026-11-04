@@ -23,7 +23,7 @@ item that is not READY.
   narrowest count) and the Docker build. `main` takes changes only through a PR with all of them
   green.
 
-**Next free item number: 11.** Always re-read it here before filing.
+**Next free item number: 13.** Always re-read it here before filing.
 
 ## Items
 
@@ -39,6 +39,8 @@ item that is not READY.
 | 08 | 2 | Release workflow without a personal access token, compatible with a PR-only `main` | **NEEDS DECISION** |
 | 09 | 0 | Dependency bumps, low risk: CI actions and patch-level libraries (Dependabot) | **READY** |
 | 10 | 0 | Web-framework bump: FastAPI and uvicorn (Starlette moves with them) | **READY** |
+| 11 | 3 | Facebook and Instagram as event sources; reading event flyers with a vision model | **NEEDS MEASUREMENT** |
+| 12 | 1 | Ticketing platforms as built-in source options (Eventbrite, DICE, Bandsintown, See Tickets, Etix) | **NEEDS MEASUREMENT** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -154,3 +156,34 @@ the count of `DeprecationWarning`s before and after, and a smoke run of a scratc
 from the branch (`AUTH_MODE=local`): `/health`, `/events`, `/events/calendar`, `/feed/events.ics`,
 `/admin` redirect, a local sign-in round trip. Item 07 runs after this one (some of its
 deprecations may change with the bump).
+
+### 11 — Facebook and Instagram; flyers through a vision model — NEEDS MEASUREMENT
+
+Many small venues announce shows only on Facebook or Instagram. Before any code, a session
+establishes, with dated evidence and the fewest possible requests:
+
+1. **Facebook:** what a logged-out client gets from a public Page's events (page and mobile
+   variants), what the Graph API requires for Page events today (permissions, app review, which
+   Pages), and whether any calendar export exists for events a user follows. Scraping behind a login
+   is out: this project does not hold anyone's social-media credentials.
+2. **Instagram:** what a logged-out client gets from a public profile; whether posts carry event
+   data or only images.
+3. **Flyers through a vision model:** on a set of real event flyers (public posts saved by URL,
+   kept outside the repo) and their hand-written truth (title, date, start time, venue, price),
+   measure each candidate local vision model (an Ollama-compatible endpoint, configurable) for field
+   accuracy, wrong-date rate and time per flyer. A wrong date is worse than a missing event: report it
+   separately.
+
+Decide after the numbers: build (which path), or record why not. Whatever is built takes its
+endpoint and model from config and never assumes one host.
+
+### 12 — Ticketing platforms as built-in source options — NEEDS MEASUREMENT
+
+Make the common ticketing platforms first-class source types, offered in the admin "add source"
+form and recognised by auto-detection from a pasted URL: **Eventbrite** (today only a regional
+search scraper), **DICE**, **Bandsintown**, **See Tickets** and **Etix**. Per platform, measure
+first: how a venue's or organizer's event list is reachable (public API and its key and terms,
+JSON-LD on venue pages, an iCal export, or JS-rendered only), what a request returns for a test
+venue, and the rate limits. Then build one source type per platform that has a sanctioned or
+structured path, each with saved-fixture tests (no live site in CI) and a detection rule; a platform
+with no such path is recorded as such, not scraped around.
