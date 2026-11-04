@@ -68,11 +68,34 @@
             {% endfor %}
           </select>
         </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">📬 Digest</h2>
+      <p class="hint">A notification (ntfy, below) listing upcoming events. It is sent only when the list has something new or changed since the last digest that was sent; removals alone never send. A skipped run does not move the schedule. These settings are saved here and are not read from environment variables.</p>
+      <div class="form-grid">
         <div class="form-group">
-          <label>Daily Digest Time <small>(HH:MM local)</small></label>
+          <label class="checkbox-label">
+            <input type="checkbox" name="digest_enabled" value="on" {{ 'checked' if cfg.digest_enabled }}>
+            Send the digest
+          </label>
+          <small>Does nothing until an ntfy server and topic are set</small>
+        </div>
+        <div class="form-group">
+          <label>Every (days)</label>
+          <input type="number" name="digest_interval_days" value="{{ cfg.digest_interval_days }}" min="1" max="30">
+        </div>
+        <div class="form-group">
+          <label>At <small>(HH:MM, in the timezone above)</small></label>
           <input type="text" name="digest_time" value="{{ cfg.digest_time }}" placeholder="09:00">
         </div>
+        <div class="form-group">
+          <label>Events starting within (days)</label>
+          <input type="number" name="digest_window_days" value="{{ cfg.digest_window_days }}" min="1" max="365">
+        </div>
       </div>
+      <p><a href="/admin/digest" class="btn">Preview &amp; send test</a></p>
     </div>
 
     <div class="card">

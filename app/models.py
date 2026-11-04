@@ -47,6 +47,7 @@ class Event(Base):
 
     first_seen = Column(DateTime, default=datetime.now)
     last_seen = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # Unused since item 14: the digest compares fingerprints with the last SENT digest.
     notified = Column(Boolean, default=False, nullable=False)
 
     source = relationship("Source", back_populates="events")
@@ -60,7 +61,7 @@ class NotificationLog(Base):
     event_count = Column(Integer)
     event_ids = Column(Text)
     ntfy_topic = Column(String)
-    status = Column(String)
+    status = Column(String)  # sent | skipped-unchanged | skipped-empty | failed
     error_msg = Column(Text)
 
 

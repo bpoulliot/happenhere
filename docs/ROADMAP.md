@@ -23,7 +23,7 @@ item that is not READY.
   narrowest count) and the Docker build. `main` takes changes only through a PR with all of them
   green.
 
-**Next free item number: 15.** Always re-read it here before filing.
+**Next free item number: 16.** Always re-read it here before filing.
 
 ## Items
 
@@ -42,7 +42,8 @@ item that is not READY.
 | 11 | 3 | Facebook and Instagram as event sources; reading event flyers with a vision model | **NEEDS MEASUREMENT** |
 | 12 | 1 | Ticketing platforms as built-in source options (Eventbrite, DICE, Bandsintown, See Tickets, Etix) | **NEEDS MEASUREMENT** |
 | 13 | 1 | Local scraper plugins: extra source types loaded from a directory outside the repo | **DONE** |
-| 14 | 1 | Configurable notification digest that never repeats an unchanged list | **READY** |
+| 14 | 1 | Configurable notification digest that never repeats an unchanged list | **DONE** |
+| 15 | 0 | A re-scraped event keeps its first start time: a changed time never reaches the feed or the digest | **READY** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -250,7 +251,7 @@ new panel; it now passes the plugin report and has a render test.
 built-in-collision and plugin-collision tests fail, as does the inherited-type test (the mutant also
 leaves the registry damaged for later tests).
 
-### 14 — Configurable digest that never repeats itself — READY
+### 14 — Configurable digest that never repeats itself — DONE
 
 **Why:** today's digest runs daily, decides "new" from a per-event `notified` flag, and its title
 hard-codes one city. The owner wants a digest on a configurable interval that **never sends when
@@ -284,3 +285,50 @@ it is sent, as scheduled. A skipped run does not move the schedule.
 **Tests** (fake clock): the owner's Monday/Thursday/Sunday example exactly; removal-only does not
 send; a changed start time sends; first run sends; a failed post retries next run; changing the
 interval reschedules; no ntfy settings means no send and no error; the title names no place.
+
+**Built.** `app/digest.py` (schedule, content, gate, preview, test send), `app/ntfy.py` (transport
+only), `scheduler.schedule_digest()`, the Digest card on Settings and `/admin/digest` (Preview and
+Send test). Tests: `tests/test_digest.py`.
+
+* **Settings** (admin UI only; of these only the older `DIGEST_TIME` is also read from the
+  environment, and it wins at every start): `digest_enabled` (default on), `digest_interval_days`
+  (3, clamped 1-30), `digest_time` (09:00; a value that is not HH:MM is refused and the old one kept),
+  `digest_window_days` (14, clamped 1-365). Saving reschedules the job without a restart.
+* **Schedule:** one date job, re-armed after every run. The anchor (`AppMeta` `digest_last_scheduled`)
+  is written for every scheduled run, sent or skipped. Slots are anchor + whole intervals at the
+  wall-clock `digest_time` in the configured timezone (stable across a DST change). A slot that
+  passed while the app was down is skipped, not run late, and the phase is kept. With no anchor the
+  first slot is the next `digest_time`.
+* **Gate:** the last SENT digest's fingerprints are stored (`digest_last_sent_fingerprints`), written
+  only after a successful post. A fingerprint is a hash of `event_identity(ev)` (today the dedup
+  hash; item 03's stable UID replaces that one function), title, start time and venue. Sends iff at
+  least one entry is not in that set, or nothing has ever been sent. All entries are fingerprinted,
+  not just the 20 listed.
+* **`NotificationLog.status`:** `sent`, `skipped-unchanged`, `skipped-empty`, `failed`. "ntfy not
+  configured" and "digest off" write no row, so enabling ntfy later still sends the first digest.
+  `Event.notified` is no longer read or written by the digest (the column stays).
+* **Transport:** the digest is published to ntfy as JSON. The old `Title:` header carried an em dash,
+  and httpx refuses a non-ASCII header value, so a title like "<site> — N events" could not have
+  been sent that way.
+* **Title:** `<city_name or "HappenHere"> — N events in the next D days`. No place is named in code.
+* **Mutants** (run against the finished tests; each reverted):
+  * gate against the last RUN (the fingerprints stored after every run, sent or not) fails
+    `test_a_failed_new_event_on_thursday_is_retried_on_sunday` (the Sunday step: C was new on
+    Thursday, its post failed, and the mutant then sees nothing new on Sunday),
+    `test_an_event_that_drops_out_and_comes_back_is_not_new` and
+    `test_a_failed_post_is_not_recorded_as_sent_and_the_next_run_retries`: 3 failed, 31 passed.
+    The plain Monday/Thursday/Sunday test passes under this mutant, because its Sunday has a new
+    event whichever digest it is compared with; the two variants above are what separate them.
+  * gate that fires on any difference, removals included, fails `test_removal_only_does_not_send`,
+    `test_passed_events_alone_do_not_send` and the drop-out test: 3 failed, 31 passed.
+
+### 15 — A re-scraped event keeps its first start time — READY
+
+**Found by item 14, not fixed there.** `upsert_events` (`app/dedup.py`) refreshes title,
+description, end time, address, URL and image on an event it has seen, but never `start_dt` or
+`venue_name`. The dedup hash is title + date + venue, so a venue that moves an event's start time
+within the same day (7 pm to 9 pm) updates nothing: the public page, the ICS feed and the digest
+all keep the old time. Reproduced with two `upsert_events` calls on a synthetic event: the second
+call leaves `start_dt` at 19:00. **Spec:** update `start_dt` on a seen event, and let item 03's
+stable UID decide what counts as "the same event" first (the feed UID must not change when a time
+does). **Test:** the reproduction above, plus a feed test that the UID is unchanged by the edit.

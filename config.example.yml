@@ -12,7 +12,14 @@ tz: "America/Los_Angeles"
 
 # --- Scheduling ---
 scrape_interval_hours: 6
+
+# The digest (ntfy): a list of upcoming events every few days, sent only when something is new
+# or changed since the last digest sent. These are admin-UI settings (Settings > Digest); the
+# file only seeds them. Of the digest settings only DIGEST_TIME is also read from the environment.
+# digest_enabled: true
+# digest_interval_days: 3
 digest_time: "09:00"
+# digest_window_days: 14
 
 # --- Notifications (optional) ---
 # ntfy_url: "https://ntfy.sh"

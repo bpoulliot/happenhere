@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 class Config:
     # Location — set by the user in the admin settings UI
     city_zip: str = ""
-    city_name: str = ""  # e.g. "Colorado Springs, CO" — used as venue fallback
+    city_name: str = ""  # e.g. "Portland, OR" — venue fallback, and the name in digest titles
     city_radius_miles: int = 25
 
     # Regional scraper hints (auto-built from city_name / city_zip if blank)
@@ -23,7 +23,13 @@ class Config:
 
     # Scheduling
     scrape_interval_hours: int = 6
-    digest_time: str = "09:00"
+
+    # Digest (item 14). Admin-UI settings: deliberately not in the env mapping below, except the
+    # older DIGEST_TIME, which still overrides digest_time at every start.
+    digest_enabled: bool = True  # does nothing until ntfy is configured
+    digest_interval_days: int = 3
+    digest_time: str = "09:00"  # HH:MM in `tz`
+    digest_window_days: int = 14
 
     # Notifications
     ntfy_url: str = ""

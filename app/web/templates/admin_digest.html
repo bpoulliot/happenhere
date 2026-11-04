@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Digest preview{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Digest preview</h1>
+  <a href="/admin/settings" class="btn">← Settings</a>
+</div>
+
+{% if test_result %}
+  {% if test_result.ok %}
+  <div class="alert alert-ok">Test sent. Nothing was recorded.</div>
+  {% else %}
+  <div class="alert alert-error">Test failed: {{ test_result.error }}</div>
+  {% endif %}
+{% endif %}
+
+<div class="card">
+  <h2 class="card-title">{% if d.would_send %}Would send{% else %}Would not send{% endif %}</h2>
+  <p>{{ d.reason }}</p>
+  <p class="hint">
+    {% if d.last_sent_at %}Last digest sent: {{ d.last_sent_at }}.{% else %}No digest has been sent yet.{% endif %}
+    {% if next_run %} Next scheduled run: {{ next_run }}.{% elif not cfg.digest_enabled %} The digest is off.{% endif %}
+  </p>
+</div>
+
+<div class="card">
+  <h2 class="card-title">{{ d.title }}</h2>
+  {% if d.entries %}
+  <pre class="mono" style="white-space:pre-wrap">{{ d.body }}</pre>
+  {% else %}
+  <p class="hint">Nothing to list.</p>
+  {% endif %}
+  <p class="hint">{{ d.entries | length }} listed, {{ d.new_count }} new or changed since the last digest sent.</p>
+</div>
+
+<form method="post" action="/admin/digest/test">
+  <button type="submit" class="btn btn-primary">Send test</button>
+  <small>Posts this digest marked TEST. It records nothing and does not count as the last digest sent.</small>
+</form>
+{% endblock %}

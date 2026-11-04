@@ -108,13 +108,11 @@ async def lifespan(app: FastAPI):
     _oidc.configure(cfg)
     load_plugins(cfg.plugins_dir)
     init_db()
-    from .jobs import run_all_scrapers, send_daily_digest
+    from .jobs import run_all_scrapers
 
     start(
         scrape_fn=run_all_scrapers,
-        digest_fn=send_daily_digest,
         scrape_interval_hours=cfg.scrape_interval_hours,
-        digest_time=cfg.digest_time,
     )
     yield
     stop()

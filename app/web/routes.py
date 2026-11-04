@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import joinedload
 
 from .. import auth as _auth
+from .. import digest as _digest
 from .. import oidc as _oidc
 from ..config import get_config, save_config_fields
 from ..db import get_session
@@ -590,6 +591,11 @@ async def scrape_all():
 # ---------------------------------------------------------------------------
 
 
+def _clean_hhmm(value: str, fallback: str) -> str:
+    parsed = _digest.parse_hhmm(value)
+    return f"{parsed[0]:02d}:{parsed[1]:02d}" if parsed else fallback
+
+
 @router.get("/admin/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
     cfg = get_config()
@@ -605,7 +611,10 @@ async def settings_page(request: Request):
                 "eventbrite_region": cfg.eventbrite_region,
                 "meetup_location": cfg.meetup_location,
                 "scrape_interval_hours": cfg.scrape_interval_hours,
+                "digest_enabled": cfg.digest_enabled,
+                "digest_interval_days": cfg.digest_interval_days,
                 "digest_time": cfg.digest_time,
+                "digest_window_days": cfg.digest_window_days,
                 "tz": cfg.tz,
                 "ntfy_url": cfg.ntfy_url,
                 "ntfy_topic": cfg.ntfy_topic,
@@ -625,7 +634,10 @@ async def settings_save(
     eventbrite_region: str = Form(""),
     meetup_location: str = Form(""),
     scrape_interval_hours: int = Form(6),
+    digest_enabled: str = Form("off"),
+    digest_interval_days: int = Form(3),
     digest_time: str = Form("09:00"),
+    digest_window_days: int = Form(14),
     tz: str = Form("America/Chicago"),
     ntfy_url: str = Form(""),
     ntfy_topic: str = Form("happenhere"),
@@ -633,6 +645,7 @@ async def settings_save(
     pexels_api_key: str = Form(""),
     require_login_to_view: str = Form("off"),
 ):
+    cfg = get_config()
     updates = {
         "city_name": city_name,
         "city_zip": city_zip,
@@ -640,7 +653,10 @@ async def settings_save(
         "eventbrite_region": eventbrite_region,
         "meetup_location": meetup_location,
         "scrape_interval_hours": scrape_interval_hours,
-        "digest_time": digest_time,
+        "digest_enabled": (digest_enabled == "on"),
+        "digest_interval_days": min(30, max(1, digest_interval_days)),
+        "digest_time": _clean_hhmm(digest_time, cfg.digest_time),
+        "digest_window_days": min(365, max(1, digest_window_days)),
         "tz": tz,
         "ntfy_url": ntfy_url,
         "ntfy_topic": ntfy_topic,
@@ -655,14 +671,55 @@ async def settings_save(
     save_config_fields(updates)
 
     # Reschedule scraper if interval changed
-    from ..scheduler import reschedule_scraper
+    from ..scheduler import reschedule_scraper, schedule_digest
 
     try:
         reschedule_scraper(scrape_interval_hours)
     except Exception:
         pass
+    try:
+        schedule_digest()  # the digest's interval, time and on/off apply without a restart
+    except Exception:
+        log.exception("Could not reschedule the digest")
 
     return RedirectResponse("/admin/settings?saved=1", status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# Admin — digest preview and test send
+# ---------------------------------------------------------------------------
+
+
+def _digest_page(request: Request, test_result: dict | None = None):
+    from ..scheduler import digest_job
+
+    job = digest_job()
+    return templates.TemplateResponse(
+        request,
+        "admin_digest.html",
+        {
+            "request": request,
+            "d": _digest.preview(),
+            "cfg": get_config(),
+            "next_run": (
+                job.next_run_time.strftime("%a %Y-%m-%d %H:%M %Z")
+                if job and job.next_run_time
+                else None
+            ),
+            "test_result": test_result,
+        },
+    )
+
+
+@router.get("/admin/digest", response_class=HTMLResponse)
+async def digest_preview(request: Request):
+    return _digest_page(request)
+
+
+@router.post("/admin/digest/test", response_class=HTMLResponse)
+async def digest_send_test(request: Request):
+    ok, err, _ = _digest.send_test()
+    return _digest_page(request, {"ok": ok, "error": err})
 
 
 # ---------------------------------------------------------------------------
