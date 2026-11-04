@@ -117,9 +117,3 @@ def _backfill_pexels_images() -> None:
 
         session.commit()
         log.info("pexels: backfill complete")
-
-
-def send_daily_digest() -> None:
-    from .ntfy import send_digest
-
-    send_digest()
