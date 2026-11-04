@@ -26,6 +26,25 @@
   <a href="/logout" class="btn btn-muted">Sign out</a>
 </div>
 
+{% if plugins.directory %}
+<details class="plugins-panel" {% if plugins.errors %}open{% endif %} style="margin-bottom:1rem">
+  <summary>Plugins: {{ plugins.loaded | length }} loaded{% if plugins.errors %}, <span class="err-count">{{ plugins.errors | length }} failed</span>{% endif %}</summary>
+  {% if plugins.loaded %}
+  <table class="source-table">
+    <thead><tr><th>Type</th><th>Label</th><th>Module</th><th>Class</th></tr></thead>
+    <tbody>
+    {% for p in plugins.loaded %}
+    <tr><td class="mono">{{ p.source_type }}</td><td>{{ p.label }}</td><td class="mono">{{ p.module }}</td><td class="mono">{{ p.class_name }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% for e in plugins.errors %}
+  <div class="alert alert-error"><span class="mono">{{ e.module }}</span>: {{ e.message }}</div>
+  {% endfor %}
+</details>
+{% endif %}
+
 {% if sources %}
 <table class="source-table">
   <thead>

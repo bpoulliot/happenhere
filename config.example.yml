@@ -38,6 +38,12 @@ digest_time: "09:00"
 # public_url: "https://events.example.org"   # redirect URI = <public_url>/auth/oidc/callback
 # Behind a reverse proxy, set FORWARDED_ALLOW_IPS to the proxy's address (never "*").
 
+# --- Local scraper plugins (optional) ---
+# A directory of *.py files, each defining BaseScraper subclasses with a SOURCE_TYPE; they become extra
+# source types. Env: PLUGINS_DIR. Plugins are code that runs with the app's privileges: the directory
+# must be writable only by the operator and mounted read-only (e.g. ./plugins:/app/plugins:ro).
+# plugins_dir: "/app/plugins"
+
 # --- Access ---
 # Set to true to require login to view events (default: events are public)
 # require_login_to_view: false

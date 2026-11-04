@@ -41,7 +41,7 @@ item that is not READY.
 | 10 | 0 | Web-framework bump: FastAPI and uvicorn (Starlette moves with them) | **READY** |
 | 11 | 3 | Facebook and Instagram as event sources; reading event flyers with a vision model | **NEEDS MEASUREMENT** |
 | 12 | 1 | Ticketing platforms as built-in source options (Eventbrite, DICE, Bandsintown, See Tickets, Etix) | **NEEDS MEASUREMENT** |
-| 13 | 1 | Local scraper plugins: extra source types loaded from a directory outside the repo | **READY** |
+| 13 | 1 | Local scraper plugins: extra source types loaded from a directory outside the repo | **DONE** |
 | 14 | 1 | Configurable notification digest that never repeats an unchanged list | **READY** |
 
 ### 01 — Green CI and safety fixes — DONE
@@ -205,7 +205,7 @@ venue, and the rate limits. Then build one source type per platform that has a s
 structured path, each with saved-fixture tests (no live site in CI) and a detection rule; a platform
 with no such path is recorded as such, not scraped around.
 
-### 13 — Local scraper plugins — READY
+### 13 — Local scraper plugins — DONE
 
 **Why:** some venues need a scraper written for their one site. That code is about a particular
 place, so it does not belong in this generic repository, yet a deployment needs it. A deployment
@@ -230,6 +230,25 @@ keeps such scrapers in its own directory and the app loads them as extra source 
 **Tests** (a temp plugin dir): a good plugin registers and scrapes a saved fixture; a module with a
 syntax error is skipped and logged while the app starts; a colliding type is refused; no
 `PLUGINS_DIR` loads nothing; the admin page renders the plugin list.
+
+**Built:** `app/plugins.py` (`load_plugins`, `unload`, `get_report`), `register_type` /
+`unregister_type` in `app/scrapers/registry.py`, `plugins_dir` / `PLUGINS_DIR` in `app/config.py`,
+loaded in the lifespan before the database and the scheduler start and by `python -m app.sources`
+(so a plugin's type is valid in a `sources.yml`), a "Plugins" panel on `/admin`; tests in
+`tests/test_plugins.py`. The API and the security rule are in `CLAUDE.md`.
+
+Choices the spec left open: a class registers only if it is defined in the plugin module (not
+imported into it), is not abstract and sets `SOURCE_TYPE` in its own body (a subclass of a built-in
+base does not inherit the base's type); `SOURCE_TYPE` must match `[a-z0-9][a-z0-9_-]*`; on a
+collision the first module in file-name order wins; `SystemExit` raised by a plugin at import is
+caught like any other failure; a missing `PLUGINS_DIR` is reported as an error on the admin page, not
+fatal; plugin files named `_*.py` load like any other. Found while building: the `POST
+/admin/scrape/{name}` handler renders `admin.html` with its own context and would have crashed on the
+new panel; it now passes the plugin report and has a render test.
+
+**Mutant:** with the collision check removed from the loader (and from `register_type`), the
+built-in-collision and plugin-collision tests fail, as does the inherited-type test (the mutant also
+leaves the registry damaged for later tests).
 
 ### 14 — Configurable digest that never repeats itself — READY
 
