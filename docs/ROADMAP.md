@@ -23,7 +23,7 @@ item that is not READY.
   narrowest count) and the Docker build. `main` takes changes only through a PR with all of them
   green.
 
-**Next free item number: 14.** Always re-read it here before filing.
+**Next free item number: 15.** Always re-read it here before filing.
 
 ## Items
 
@@ -42,6 +42,7 @@ item that is not READY.
 | 11 | 3 | Facebook and Instagram as event sources; reading event flyers with a vision model | **NEEDS MEASUREMENT** |
 | 12 | 1 | Ticketing platforms as built-in source options (Eventbrite, DICE, Bandsintown, See Tickets, Etix) | **NEEDS MEASUREMENT** |
 | 13 | 1 | Local scraper plugins: extra source types loaded from a directory outside the repo | **READY** |
+| 14 | 1 | Configurable notification digest that never repeats an unchanged list | **READY** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -214,3 +215,38 @@ keeps such scrapers in its own directory and the app loads them as extra source 
 **Tests** (a temp plugin dir): a good plugin registers and scrapes a saved fixture; a module with a
 syntax error is skipped and logged while the app starts; a colliding type is refused; no
 `PLUGINS_DIR` loads nothing; the admin page renders the plugin list.
+
+### 14 — Configurable digest that never repeats itself — READY
+
+**Why:** today's digest runs daily, decides "new" from a per-event `notified` flag, and its title
+hard-codes one city. The owner wants a digest on a configurable interval that **never sends when
+nothing new has appeared since the last one it sent**.
+
+**The rule, in the owner's example:** a digest goes out Monday. At the next interval (Thursday)
+the list has not changed: nothing is sent. At the following interval (Sunday) there are new events:
+it is sent, as scheduled. A skipped run does not move the schedule.
+
+**Spec:**
+1. **Settings in the admin UI** (persisted like the others): `digest_enabled` (default on; it does
+   nothing until ntfy is configured), `digest_interval_days` (default **3**), `digest_time` (HH:MM,
+   default 09:00, in the configured timezone), `digest_window_days` (events starting within the next
+   N days, default 14). Saving reschedules the job without a restart.
+2. **Schedule:** one job every `digest_interval_days` at `digest_time`, anchored on the last
+   *scheduled* run (stored), not on the last *sent* one.
+3. **Content:** the upcoming events in the window, sorted by start; at most 20 lines, then "… and
+   N more"; a title from the configured site name ("<site> — N events in the next D days"), never a
+   hard-coded place; a link to the public events page.
+4. **The change gate:** each digest entry has a fingerprint (the event's stable identity; title,
+   start time and venue). A run **sends only if the new digest has at least one entry whose
+   fingerprint was not in the last SENT digest** (a new event, or a changed title, time or venue).
+   Removals alone (events passed or cancelled) never trigger a send. The first run after enabling
+   sends. A failed post is not recorded as sent, so the next run retries.
+5. Every run writes a `NotificationLog` row: `sent`, `skipped-unchanged`, `skipped-empty`,
+   `failed`. Retire the per-event `notified` flag from the decision (keep the column if dropping it
+   needs a migration).
+6. **Admin page:** "Preview" renders the next digest and says whether it would send and why; "Send
+   test" sends it marked TEST and records nothing.
+
+**Tests** (fake clock): the owner's Monday/Thursday/Sunday example exactly; removal-only does not
+send; a changed start time sends; first run sends; a failed post retries next run; changing the
+interval reschedules; no ntfy settings means no send and no error; the title names no place.
