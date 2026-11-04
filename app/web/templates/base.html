@@ -4,13 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}HappenHere{% endblock %}</title>
+  <link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
+  <link rel="manifest" href="/static/brand/site.webmanifest">
+  <meta name="theme-color" content="#0f1117">
   <link rel="stylesheet" href="/static/style.css">
   <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" defer></script>
 </head>
 <body>
   <header>
     <div class="header-inner">
-      <a href="/events" class="logo">📍 HappenHere</a>
+      <a href="/events" class="logo" aria-label="HappenHere home"><img src="/static/brand/mark.svg" alt="" class="logo-mark" width="30" height="30"><span class="logo-word">happen<span class="logo-here">here</span></span></a>
       <nav>
         <a href="/events" {% if request.url.path.startswith('/events') %}class="active"{% endif %}>Events</a>
         <a href="/events/calendar" {% if request.url.path == '/events/calendar' %}class="active"{% endif %}>Calendar</a>

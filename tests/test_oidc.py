@@ -289,3 +289,54 @@ def test_login_carries_next_through_the_session(use, idp):
         c.get("/auth/oidc/start")
         r = c.get("/auth/oidc/callback")
         assert r.headers["location"] == "/admin/settings"
+
+
+# --- brand: logo, favicon, manifest -------------------------------------------------
+
+
+def test_pages_link_the_favicon_and_manifest(use):
+    use(_cfg(**OIDC))
+    with client() as c:
+        html = c.get("/events").text
+    assert 'href="/static/brand/favicon.svg"' in html
+    assert 'href="/static/brand/site.webmanifest"' in html
+    assert 'src="/static/brand/mark.svg"' in html
+    assert "PeakEvents" not in html and "📍" not in html
+
+
+def test_login_page_is_branded():
+    from pathlib import Path
+
+    tpl = (Path(__file__).parent.parent / "app/web/templates/login.html").read_text()
+    assert "PeakEvents" not in tpl and "⛰" not in tpl
+    assert "/static/brand/mark.svg" in tpl
+
+
+@pytest.mark.parametrize(
+    "path,ctype",
+    [
+        ("/favicon.ico", "image/x-icon"),
+        ("/static/brand/favicon.svg", "image/svg+xml"),
+        ("/static/brand/mark.svg", "image/svg+xml"),
+        ("/static/brand/logo.svg", "image/svg+xml"),
+        ("/static/brand/apple-touch-icon.png", "image/png"),
+        ("/static/brand/icon-512.png", "image/png"),
+    ],
+)
+def test_brand_assets_served_publicly(use, path, ctype):
+    c_ = use(_cfg(**OIDC))
+    c_.require_login_to_view = True  # still public: browsers fetch these before any sign-in
+    with client() as c:
+        r = c.get(path)
+        assert r.status_code == 200, path
+        assert r.headers["content-type"].startswith(ctype)
+
+
+def test_manifest_icons_exist():
+    import json
+    from pathlib import Path
+
+    static = Path(__file__).parent.parent / "app/web/static"
+    m = json.loads((static / "brand/site.webmanifest").read_text())
+    for icon in m["icons"]:
+        assert (static / icon["src"].removeprefix("/static/")).is_file(), icon["src"]

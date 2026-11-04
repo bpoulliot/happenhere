@@ -47,7 +47,9 @@ header {
   align-items: center;
   justify-content: space-between;
 }
-.logo { font-size: 1.2rem; font-weight: 700; color: var(--text); letter-spacing: -0.5px; }
+.logo { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 1.25rem; font-weight: 800; color: var(--text); letter-spacing: -0.6px; text-decoration: none; }
+.logo-mark { width: 30px; height: 30px; display: block; }
+.logo-here { background: linear-gradient(90deg, var(--accent2), #f472b6); -webkit-background-clip: text; background-clip: text; color: transparent; }
 nav { display: flex; gap: 1.5rem; }
 nav a { color: var(--text-muted); font-size: 0.9rem; transition: color .15s; }
 nav a:hover, nav a.active { color: var(--accent); text-decoration: none; }

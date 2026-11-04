@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 72" role="img" aria-label="HappenHere">
+  <title>HappenHere</title>
+  <style>.hh-ink{fill:#1e1b3a}@media (prefers-color-scheme:dark){.hh-ink{fill:#e2e4ef}}</style>
+  <defs>
+    <linearGradient id="hh-pin" x1="14" y1="10" x2="50" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00d4ff"/>
+      <stop offset="0.55" stop-color="#7c6af7"/>
+      <stop offset="1" stop-color="#f472b6"/>
+    </linearGradient>
+    <linearGradient id="hh-word" x1="168" y1="0" x2="312" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7c6af7"/>
+      <stop offset="1" stop-color="#f472b6"/>
+    </linearGradient>
+    <radialGradient id="hh-glow" cx="32" cy="64" r="10" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7c6af7" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#7c6af7" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <g transform="translate(0 4)">
+    <ellipse cx="32" cy="60" rx="11" ry="3" fill="url(#hh-glow)"/>
+    <path d="M32 58C32 58 13 40.5 13 26.5A19 19 0 1 1 51 26.5C51 40.5 32 58 32 58Z" fill="url(#hh-pin)"/>
+    <path d="M32 13.5C33.4 22.2 35.8 24.6 44.5 26C35.8 27.4 33.4 29.8 32 38.5C30.6 29.8 28.2 27.4 19.5 26C28.2 24.6 30.6 22.2 32 13.5Z" fill="#ffffff"/>
+    <path d="M54.5 4C55 7 55.9 7.9 59 8.5C55.9 9.1 55 10 54.5 13C54 10 53.1 9.1 50 8.5C53.1 7.9 54 7 54.5 4Z" fill="#f472b6"/>
+    <circle cx="8.5" cy="14" r="2.2" fill="#00d4ff"/>
+  </g>
+  <text x="70" y="48" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="38" font-weight="800" letter-spacing="-1.2"><tspan class="hh-ink">happen</tspan><tspan fill="url(#hh-word)">here</tspan></text>
+</svg>
