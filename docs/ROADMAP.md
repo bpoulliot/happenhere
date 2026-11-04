@@ -23,7 +23,7 @@ item that is not READY.
   narrowest count) and the Docker build. `main` takes changes only through a PR with all of them
   green.
 
-**Next free item number: 09.** Always re-read it here before filing.
+**Next free item number: 11.** Always re-read it here before filing.
 
 ## Items
 
@@ -37,6 +37,8 @@ item that is not READY.
 | 06 | 2 | Per-source canary: a source that returns zero events or keeps failing raises one alert | **READY** |
 | 07 | 0 | Deprecations that will break: `datetime.utcnow()`, `ORJSONResponse`, authlib/Starlette on `httpx` | **READY** |
 | 08 | 2 | Release workflow without a personal access token, compatible with a PR-only `main` | **NEEDS DECISION** |
+| 09 | 0 | Dependency bumps, low risk: CI actions and patch-level libraries (Dependabot) | **READY** |
+| 10 | 0 | Web-framework bump: FastAPI and uvicorn (Starlette moves with them) | **READY** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -130,3 +132,25 @@ replacement yet). The test run must show no `DeprecationWarning` from this packa
 token, which a PR-only `main` refuses. **Question for the owner:** (a) drop releases (deploy from
 `main` SHAs), (b) release from a tag pushed by hand, the workflow only building and publishing, or
 (c) the workflow opens a version-bump PR and tags after it merges.
+
+### 09 — Dependency bumps, low risk — READY
+
+The open Dependabot PRs that touch CI actions or patch-level libraries (not FastAPI, Starlette or
+uvicorn: item 10). Each passed CI alone; together they edit the same files. One combined PR with
+exactly the versions Dependabot proposed, after reading the release notes of every **major**
+action bump (inputs, environment variables, permissions, runtime) and adjusting the workflow if a
+note requires it. Local checks, a local `docker build`, and CI green on the combined head. The
+superseded Dependabot PRs are closed with a pointer to the combined one. A workflow that only runs
+on a tag or by hand (`release.yml`) is named in the PR as not exercised.
+
+### 10 — FastAPI and uvicorn — READY
+
+FastAPI's and uvicorn's Dependabot PRs together, because FastAPI moves Starlette, which is not
+pinned here, and Starlette changes have broken every page before (item 02). Read the changelogs
+between the current and proposed versions of FastAPI, Starlette and uvicorn; list each breaking or
+deprecation note that touches code here. **Pin Starlette** to the version the new FastAPI
+resolves, so it never moves silently again. The full test suite (every page has a render test),
+the count of `DeprecationWarning`s before and after, and a smoke run of a scratch container built
+from the branch (`AUTH_MODE=local`): `/health`, `/events`, `/events/calendar`, `/feed/events.ics`,
+`/admin` redirect, a local sign-in round trip. Item 07 runs after this one (some of its
+deprecations may change with the bump).
