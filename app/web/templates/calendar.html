@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Calendar — {{ month_label }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="cal-nav">
+    <a href="/events/calendar?month={{ prev_month }}" class="btn-nav">‹ Prev</a>
+    <h1>{{ month_label }}</h1>
+    <a href="/events/calendar?month={{ next_month }}" class="btn-nav">Next ›</a>
+  </div>
+</div>
+
+<div class="cal-grid">
+  <div class="cal-dow">Sun</div>
+  <div class="cal-dow">Mon</div>
+  <div class="cal-dow">Tue</div>
+  <div class="cal-dow">Wed</div>
+  <div class="cal-dow">Thu</div>
+  <div class="cal-dow">Fri</div>
+  <div class="cal-dow">Sat</div>
+
+  {% for week in cal %}
+  {% for day in week %}
+  {% if day == 0 %}
+  <div class="cal-cell empty"></div>
+  {% else %}
+  <div class="cal-cell {% if day == today %}today{% endif %}">
+    <div class="cal-day-num">{{ day }}</div>
+    {% if events_by_day[day] is defined %}
+    {% for ev in events_by_day[day][:3] %}
+    <div class="cal-event">
+      {% if ev.source_favicon %}<img src="{{ ev.source_favicon }}" alt="" class="cal-src-icon" loading="lazy">{% endif %}
+      {% if ev.url %}<a href="{{ ev.url }}" target="_blank" rel="noopener">{{ ev.title }}</a>
+      {% else %}{{ ev.title }}{% endif %}
+    </div>
+    {% endfor %}
+    {% if events_by_day[day]|length > 3 %}
+    <div class="cal-more">+{{ events_by_day[day]|length - 3 }} more</div>
+    {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+  {% endfor %}
+  {% endfor %}
+</div>
+{% endblock %}

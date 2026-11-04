@@ -1,0 +1,220 @@
+name: CI
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 5 * * 1"   # weekly Monday security re-scan
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+jobs:
+
+  # ── Lint & Security ─────────────────────────────────────────────────────────
+  lint:
+    name: Lint & Security
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read   # gitleaks-action reads the PR commit list on pull_request events
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # gitleaks needs the PR base commit to diff on pull_request events
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install tooling
+        run: pip install ruff black bandit[toml] pip-audit
+
+      - name: Install project deps
+        run: pip install -r requirements.txt
+
+      - name: Lint (ruff)
+        run: ruff check app/
+
+      - name: Format check (black)
+        run: black --check app/
+
+      - name: Lint Dockerfile (hadolint)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: error
+
+      - name: SAST (bandit)
+        run: bandit -r app/ -ll -x app/web/static
+
+      - name: Dependency audit (pip-audit)
+        run: pip-audit -r requirements.txt
+
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Tests ───────────────────────────────────────────────────────────────────
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run smoke tests
+        run: pytest tests/ -v
+
+  # ── CodeQL ──────────────────────────────────────────────────────────────────
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    # Code scanning (the upload) needs GitHub Advanced Security on a private repo,
+    # so results are not uploaded: the job reads the SARIF itself and fails on any
+    # finding. Blocking, like every other check.
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+
+      - uses: github/codeql-action/autobuild@v3
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
+          upload: never
+          output: codeql-results
+
+      - name: Fail on CodeQL findings
+        # .github/codeql-accepted.json lists reviewed findings: rule + path, a
+        # maximum count and the reason. One finding more than the maximum fails.
+        run: |
+          python3 - <<'PY'
+          import collections, json, pathlib, sys
+          files = sorted(pathlib.Path("codeql-results").glob("*.sarif"))
+          if not files:
+              sys.exit("no SARIF written: the analysis did not run")
+          accepted = {(a["rule"], a["path"]): a["max"]
+                      for a in json.loads(pathlib.Path(".github/codeql-accepted.json").read_text())}
+          seen = collections.Counter()
+          failing, waived = [], []
+          for f in files:
+              for run in json.loads(f.read_text())["runs"]:
+                  for r in run.get("results", []):
+                      loc = r["locations"][0]["physicalLocation"]
+                      path = loc["artifactLocation"]["uri"]
+                      key = (r["ruleId"], path)
+                      seen[key] += 1
+                      line = f'{path}:{loc["region"]["startLine"]} {r["ruleId"]}: {r["message"]["text"]}'
+                      (waived if seen[key] <= accepted.get(key, 0) else failing).append(line)
+          for line in waived:
+              print("accepted:", line)
+          for line in failing:
+              print("FINDING: ", line)
+          print(f"CodeQL: {len(failing)} finding(s), {len(waived)} accepted")
+          sys.exit(1 if failing else 0)
+          PY
+
+  # ── Docker Build + Scan ─────────────────────────────────────────────────────
+  docker:
+    name: Docker Build & Scan
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: happenhere:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: happenhere:ci
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+  # ── Publish to GHCR ─────────────────────────────────────────────────────────
+  publish:
+    name: Publish to GHCR
+    runs-on: ubuntu-latest
+    needs: docker
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

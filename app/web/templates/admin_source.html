@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if source else 'Add' }} Source{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ 'Edit' if source else 'Add Source' }}</h1>
+  <a href="/admin" class="btn">← Back</a>
+</div>
+
+<!-- Step 1: URL detection (only shown when adding new) -->
+{% if not source %}
+<div class="card" id="detect-card">
+  <h2 class="card-title">Step 1 — Detect scraper from URL</h2>
+  <p class="hint">Paste the events page URL and we'll try to auto-detect the right scraper.</p>
+  <div class="detect-row">
+    <input type="url" id="detect-url" placeholder="https://example.com/events" class="url-input">
+    <button id="detect-btn" class="btn btn-primary" onclick="runDetect()">Detect</button>
+  </div>
+  <div id="detect-result" style="margin-top:1rem"></div>
+</div>
+{% endif %}
+
+<!-- Source form -->
+<div class="card" style="margin-top:1.25rem">
+  <h2 class="card-title">{{ 'Step 2 — ' if not source else '' }}Source details</h2>
+  <form method="post" action="{{ '/admin/sources/' + source.name + '/update' if source else '/admin/sources' }}">
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Display Name *</label>
+        <input type="text" name="display_name" value="{{ source.display_name if source else '' }}"
+               placeholder="e.g. City Library" required>
+        <small>Used as the venue name on event cards</small>
+      </div>
+      <div class="form-group">
+        <label>Scraper Type *</label>
+        <select name="scraper_type" id="scraper-type">
+          {% for key, label in scraper_types %}
+          <option value="{{ key }}" {% if source and source.type == key %}selected{% elif not source and key == 'jsonld' %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group" id="url-group">
+        <label>Events Page URL</label>
+        <input type="url" name="url" id="source-url" value="{{ source.url if source else '' }}"
+               placeholder="https://example.com/events">
+        <small id="url-hint">The URL of the events or calendar page</small>
+      </div>
+      <div class="form-group">
+        <label>Categories <small>(comma-separated)</small></label>
+        <input type="text" name="categories"
+               value="{{ (source.categories | join(', ')) if source else '' }}"
+               placeholder="e.g. Brewery, Live Music">
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="enabled" value="on" {{ 'checked' if not source or source.enabled }}>
+          Enabled
+        </label>
+      </div>
+    </div>
+    <div style="margin-top:1.25rem;display:flex;gap:.75rem">
+      <button type="submit" class="btn btn-primary">{{ 'Save Changes' if source else 'Add Source' }}</button>
+      <a href="/admin" class="btn">Cancel</a>
+    </div>
+  </form>
+</div>
+
+<script>
+const typeHints = {
+  jsonld: "URL of the events page — must contain schema.org/Event JSON-LD markup",
+  ical: "Direct URL to the iCal (.ics) feed, e.g. https://site.com/events/?ical=1",
+  spothopper: "URL of the SpotHopper-powered events page",
+  squarespace: "URL of the Squarespace events page (stacked layout)",
+  playwright_jsonld: "URL of a JS-heavy events page that publishes JSON-LD after rendering",
+  ticketmaster: "No URL needed — uses your city ZIP from Settings",
+  eventbrite: "No URL needed — uses your Eventbrite region from Settings",
+  meetup: "No URL needed — uses your Meetup location from Settings",
+  fathom: "No URL needed — scrapes fathomentertainment.com/releases/",
+};
+const noUrlTypes = new Set(["ticketmaster","eventbrite","meetup","fathom"]);
+
+function updateTypeHint() {
+  const t = document.getElementById('scraper-type').value;
+  document.getElementById('url-hint').textContent = typeHints[t] || '';
+  const urlGroup = document.getElementById('url-group');
+  urlGroup.style.opacity = noUrlTypes.has(t) ? '0.4' : '1';
+  urlGroup.querySelector('input').disabled = noUrlTypes.has(t);
+}
+document.getElementById('scraper-type').addEventListener('change', updateTypeHint);
+updateTypeHint();
+
+async function runDetect() {
+  const url = document.getElementById('detect-url').value.trim();
+  if (!url) return;
+  const btn = document.getElementById('detect-btn');
+  const result = document.getElementById('detect-result');
+  btn.textContent = 'Detecting…'; btn.disabled = true;
+  result.innerHTML = '<div class="hint">Trying detection strategies…</div>';
+
+  try {
+    const fd = new FormData(); fd.append('url', url);
+    const resp = await fetch('/admin/sources/detect', { method: 'POST', body: fd });
+    const data = await resp.json();
+
+    if (data.success) {
+      // Auto-fill the form
+      document.querySelector('[name=scraper_type]').value = data.scraper_type;
+      updateTypeHint();
+      const urlInput = document.getElementById('source-url');
+      urlInput.value = data.ical_url || data.detected_url || url;
+
+      let preview = '';
+      if (data.preview && data.preview.length) {
+        preview = '<ul class="preview-list">' +
+          data.preview.map(e => `<li>${e.title} <span class="hint">${e.start || ''}</span></li>`).join('') +
+          '</ul>';
+      }
+      result.innerHTML = `<div class="alert alert-ok">
+        ✓ Detected: <strong>${data.scraper_type}</strong>
+        ${preview}
+        <div class="notes">${data.notes.join(' → ')}</div>
+      </div>`;
+    } else {
+      result.innerHTML = `<div class="alert alert-warn">
+        <strong>Could not auto-detect</strong>
+        <div class="notes">${data.notes.join('<br>')}</div>
+        <p style="margin-top:.5rem;font-size:.85rem">Try selecting a scraper type manually, or check that the URL is the events page (not the homepage).</p>
+      </div>`;
+    }
+  } catch(e) {
+    result.innerHTML = `<div class="alert alert-error">Detection failed: ${e.message}</div>`;
+  }
+  btn.textContent = 'Detect'; btn.disabled = false;
+}
+
+// Allow pressing Enter in URL field to trigger detect
+document.getElementById('detect-url')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); runDetect(); }
+});
+</script>
+{% endblock %}

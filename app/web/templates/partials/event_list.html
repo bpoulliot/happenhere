@@ -1,0 +1,11 @@
+{% if events %}
+<div class="event-grid">
+  {% for ev in events %}
+  {% include "partials/event_card.html" %}
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <p>No events found. Try adjusting your filters, or check the <a href="/admin">Admin</a> page to trigger a scrape.</p>
+</div>
+{% endif %}

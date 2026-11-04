@@ -1,0 +1,8 @@
+[
+  {
+    "rule": "py/full-ssrf",
+    "path": "app/discovery.py",
+    "max": 2,
+    "reason": "Fetching an admin-entered URL is the feature (source auto-detection, admin-only). Every request, each redirect hop included, passes app/netguard.require_public_url, which refuses non-global addresses. Accepted 2026-11-04 (docker TODO A29)."
+  }
+]

@@ -1,0 +1,47 @@
+# HappenHere config — copy to config.yml alongside docker-compose.yml
+
+# --- Location (required) ---
+city_name: "Portland, OR"
+city_zip: "97201"
+city_radius_miles: 25
+tz: "America/Los_Angeles"
+
+# --- Regional scraper hints (optional) ---
+# eventbrite_region: "or--portland"
+# meetup_location: "us--or--Portland"
+
+# --- Scheduling ---
+scrape_interval_hours: 6
+digest_time: "09:00"
+
+# --- Notifications (optional) ---
+# ntfy_url: "https://ntfy.sh"
+# ntfy_topic: "happenhere"
+# ntfy_token: ""
+
+# --- API keys (optional) ---
+# ticketmaster_api_key: ""
+# pexels_api_key: ""
+
+# --- Admin sign-in ---
+# auth_mode: local   # built-in admin account (default). The first start writes a
+#                    # generated password to <data>/initial-password, or set
+#                    # HAPPENHERE_USERNAME / HAPPENHERE_PASSWORD.
+# auth_mode: oidc    # any OpenID Connect provider; the local login is DISABLED.
+# oidc_discovery_url: "https://auth.example.org/application/o/happenhere/.well-known/openid-configuration"
+# oidc_client_id: "happenhere"
+# oidc_client_secret: ""          # better: OIDC_CLIENT_SECRET_FILE=/run/secrets/...
+# oidc_admin_group: "admins"      # must appear in the ID token's groups claim
+# oidc_groups_claim: "groups"
+# oidc_scopes: "openid email profile groups"  # Authentik/Authelia need "groups" for the claim
+# oidc_username_claim: "preferred_username"
+# public_url: "https://events.example.org"   # redirect URI = <public_url>/auth/oidc/callback
+# Behind a reverse proxy, set FORWARDED_ALLOW_IPS to the proxy's address (never "*").
+
+# --- Access ---
+# Set to true to require login to view events (default: events are public)
+# require_login_to_view: false
+
+# --- Misc ---
+db_path: "/app/data/happenhere.db"
+log_level: "INFO"

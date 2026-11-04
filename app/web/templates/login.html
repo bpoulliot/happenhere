@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PeakEvents — Sign in</title>
+<style>
+  :root { --bg: #0f1117; --surface: #1a1d27; --border: #2e3147; --text: #e2e8f0; --muted: #7a8399; --accent: #00d4ff; --red: #f87171; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 "Segoe UI", system-ui, sans-serif; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 32px 40px; width: 340px; }
+  .logo-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 24px; }
+  .logo-row .icon { font-size: 32px; }
+  .logo-row h1 { font-size: 22px; font-weight: 700; }
+  label { display: block; font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 4px; margin-top: 14px; text-transform: uppercase; letter-spacing: .5px; }
+  input[type=text], input[type=password] {
+    width: 100%; padding: 8px 12px; border-radius: 6px;
+    border: 1px solid var(--border); background: #0c0e14; color: var(--text);
+    font-size: 14px;
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+  .btn { display: block; width: 100%; margin-top: 20px; padding: 10px; border-radius: 6px; border: 1px solid #0891b2; background: #0c3a4a; color: #ddeeff; font-size: 14px; font-weight: 600; cursor: pointer; letter-spacing: .3px; }
+  .btn:hover { background: #0e4d63; }
+  .error { background: #1a0a10; border: 1px solid var(--red); border-radius: 6px; color: var(--red); font-size: 13px; padding: 8px 12px; margin-bottom: 8px; }
+  .hint { text-align: center; font-size: 11px; color: var(--muted); margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo-row">
+    <span class="icon">⛰</span>
+    <h1>PeakEvents</h1>
+  </div>
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="/login">
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" autocomplete="username" autofocus required>
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" autocomplete="current-password" required>
+    <button class="btn" type="submit">Sign in</button>
+  </form>
+
+  <p class="hint">Check container logs for first-run credentials.</p>
+</div>
+</body>
+</html>

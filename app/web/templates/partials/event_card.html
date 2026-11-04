@@ -1,0 +1,48 @@
+<article class="event-card">
+  <div class="event-img">
+    {% if ev.image_url %}
+    <img src="{{ ev.image_url }}" alt="{{ ev.title }}" loading="lazy"
+         onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+    {% endif %}
+    <div class="event-img-placeholder"
+         {% if ev.image_url %}style="display:none"{% endif %}
+         {% if ev.stock_photo %}data-bg="{{ ev.stock_photo }}"{% endif %}>
+      {% if ev.source_logo %}
+      <img src="{{ ev.source_logo }}" alt="{{ ev.source }}" loading="lazy" class="source-logo-img"
+           onerror="this.style.display='none'">
+      {% endif %}
+    </div>
+  </div>
+  <div class="event-body">
+    <div class="event-meta">
+      <span class="event-date">{{ ev.start_display }}</span>
+      {% if ev.source %}
+      <span class="source-badge source-{{ ev.source_name }}">
+        {% if ev.source_favicon %}<img src="{{ ev.source_favicon }}" alt="" class="source-icon" loading="lazy" onerror="this.style.display='none'">{% endif %}{{ ev.source }}
+      </span>
+      {% endif %}
+    </div>
+    <h2 class="event-title">
+      {% if ev.url %}
+      <a href="{{ ev.url }}" target="_blank" rel="noopener">{{ ev.title }}</a>
+      {% else %}
+      {{ ev.title }}
+      {% endif %}
+    </h2>
+    {% if ev.venue_name %}
+    <div class="event-venue">
+      📍 {{ ev.venue_name }}{% if ev.venue_addr %} · <small>{{ ev.venue_addr }}</small>{% endif %}
+    </div>
+    {% endif %}
+    {% if ev.description %}
+    <p class="event-desc">{{ ev.description }}</p>
+    {% endif %}
+    {% if ev.categories %}
+    <div class="event-cats">
+      {% for cat in ev.categories %}
+      <span class="cat-tag">{{ cat }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</article>

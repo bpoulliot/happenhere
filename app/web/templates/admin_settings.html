@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Settings</h1>
+  <a href="/admin" class="btn">← Back</a>
+</div>
+
+{% if request.query_params.get('saved') %}
+<div class="alert alert-ok">Settings saved.</div>
+{% endif %}
+
+<form method="post" action="/admin/settings">
+  <div class="settings-sections">
+
+    <div class="card">
+      <h2 class="card-title">📍 Location</h2>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>City Name</label>
+          <input type="text" name="city_name" value="{{ cfg.city_name }}" placeholder="e.g. Portland, OR">
+          <small>Shown in the UI and used as the default venue name for regional scrapers</small>
+        </div>
+        <div class="form-group">
+          <label>ZIP Code</label>
+          <input type="text" name="city_zip" value="{{ cfg.city_zip }}" placeholder="e.g. 97201" maxlength="10">
+          <small>Used by Ticketmaster and other radius-based APIs</small>
+        </div>
+        <div class="form-group">
+          <label>Radius (miles)</label>
+          <input type="number" name="city_radius_miles" value="{{ cfg.city_radius_miles }}" min="1" max="200">
+        </div>
+        <div class="form-group">
+          <label>Timezone</label>
+          <input type="text" name="tz" value="{{ cfg.tz }}" placeholder="America/Chicago">
+          <small>IANA timezone identifier, e.g. America/New_York, America/Los_Angeles</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">🌐 Regional Scrapers</h2>
+      <p class="hint">These values let regional scrapers filter results to your city. Leave blank if you don't use those scrapers.</p>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Eventbrite Region</label>
+          <input type="text" name="eventbrite_region" value="{{ cfg.eventbrite_region }}"
+                 placeholder="e.g. or--portland">
+          <small>The slug in eventbrite.com/d/<strong>or--portland</strong>/events/</small>
+        </div>
+        <div class="form-group">
+          <label>Meetup Location</label>
+          <input type="text" name="meetup_location" value="{{ cfg.meetup_location }}"
+                 placeholder="e.g. us--or--Portland">
+          <small>The location param in meetup.com/find/?location=<strong>us--or--Portland</strong></small>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">⏱ Scheduling</h2>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Scrape Interval</label>
+          <select name="scrape_interval_hours">
+            {% for h in [1, 3, 6, 12, 24] %}
+            <option value="{{ h }}" {% if h == cfg.scrape_interval_hours %}selected{% endif %}>Every {{ h }}h</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Daily Digest Time <small>(HH:MM local)</small></label>
+          <input type="text" name="digest_time" value="{{ cfg.digest_time }}" placeholder="09:00">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">🔔 Notifications (ntfy)</h2>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>ntfy Server URL</label>
+          <input type="url" name="ntfy_url" value="{{ cfg.ntfy_url }}" placeholder="https://ntfy.sh">
+        </div>
+        <div class="form-group">
+          <label>ntfy Topic</label>
+          <input type="text" name="ntfy_topic" value="{{ cfg.ntfy_topic }}" placeholder="happenhere">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">🔑 API Keys</h2>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Ticketmaster API Key</label>
+          <input type="password" name="ticketmaster_api_key"
+                 placeholder="{{ '(set)' if cfg.ticketmaster_api_key else 'sk_…' }}"
+                 autocomplete="off">
+          <small>Leave blank to keep the existing key</small>
+        </div>
+        <div class="form-group">
+          <label>Pexels API Key <small>(for event images)</small></label>
+          <input type="password" name="pexels_api_key"
+                 placeholder="{{ '(set)' if cfg.pexels_api_key else 'Enter key…' }}"
+                 autocomplete="off">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">🔒 Access</h2>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="require_login_to_view" value="on"
+                 {{ 'checked' if cfg.require_login_to_view }}>
+          Require login to view events (private deployment)
+        </label>
+        <small>When disabled, events are publicly readable; only admin actions require login</small>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="margin-top:1.5rem;display:flex;gap:.75rem">
+    <button type="submit" class="btn btn-primary">Save Settings</button>
+    <a href="/admin" class="btn">Cancel</a>
+  </div>
+</form>
+{% endblock %}

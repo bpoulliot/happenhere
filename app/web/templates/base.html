@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}HappenHere{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" defer></script>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <a href="/events" class="logo">📍 HappenHere</a>
+      <nav>
+        <a href="/events" {% if request.url.path.startswith('/events') %}class="active"{% endif %}>Events</a>
+        <a href="/events/calendar" {% if request.url.path == '/events/calendar' %}class="active"{% endif %}>Calendar</a>
+        <a href="/admin" {% if request.url.path.startswith('/admin') %}class="active"{% endif %}>Admin</a>
+        <a href="/feed/events.ics" class="ics-link" title="Subscribe in calendar app">iCal</a>
+      </nav>
+    </div>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer>
+    <span>{% block footer %}HappenHere · <a href="/feed/events.ics">webcal feed</a> · <a href="/api/events">JSON API</a>{% endblock %}</span>
+  </footer>
+<script>
+  function applyPlaceholderBgs(root) {
+    (root || document).querySelectorAll('.event-img-placeholder[data-bg]').forEach(el => {
+      el.style.backgroundImage = 'url(' + el.dataset.bg + ')';
+    });
+  }
+  document.addEventListener('DOMContentLoaded', () => applyPlaceholderBgs());
+  document.addEventListener('htmx:afterSwap', e => applyPlaceholderBgs(e.target));
+</script>
+</body>
+</html>

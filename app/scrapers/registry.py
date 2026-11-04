@@ -1,0 +1,82 @@
+"""Dynamic scraper registry.
+
+Scrapers are looked up by `source.type` (not source.name) and instantiated
+with the source's URL and display_name so no hardcoded venue data is needed.
+"""
+
+from __future__ import annotations
+
+from .base import BaseScraper
+
+# Regional aggregators keep their own classes; they use config.city_zip/radius
+from .eventbrite import EventbriteScraper
+from .generic import (
+    GenericICalScraper,
+    GenericJsonLdScraper,
+    GenericPlaywrightJsonLdScraper,
+    GenericSpotHopperScraper,
+    GenericSquarespaceScraper,
+)
+from .meetup import MeetupScraper
+from .ticketmaster import TicketmasterScraper
+
+try:
+    from .fathom import FathomScraper
+
+    _HAS_FATHOM = True
+except ImportError:
+    _HAS_FATHOM = False
+
+_TYPE_MAP: dict[str, type[BaseScraper]] = {
+    "jsonld": GenericJsonLdScraper,
+    "ical": GenericICalScraper,
+    "spothopper": GenericSpotHopperScraper,
+    "squarespace": GenericSquarespaceScraper,
+    "playwright_jsonld": GenericPlaywrightJsonLdScraper,
+    "ticketmaster": TicketmasterScraper,
+    "eventbrite": EventbriteScraper,
+    "meetup": MeetupScraper,
+}
+
+if _HAS_FATHOM:
+    _TYPE_MAP["fathom"] = FathomScraper
+
+# Human-readable labels for the admin UI
+TYPE_LABELS: dict[str, str] = {
+    "jsonld": "JSON-LD / HTML",
+    "ical": "iCal Feed",
+    "spothopper": "SpotHopper Widget",
+    "squarespace": "Squarespace Events",
+    "playwright_jsonld": "JavaScript (JSON-LD)",
+    "ticketmaster": "Ticketmaster (regional)",
+    "eventbrite": "Eventbrite (regional)",
+    "meetup": "Meetup (regional)",
+    "fathom": "Fathom Entertainment",
+}
+
+# Map detection result type → registered scraper type
+DETECTION_TYPE_MAP: dict[str, str] = {
+    "jsonld": "jsonld",
+    "ical": "ical",
+    "spothopper": "spothopper",
+    "squarespace": "squarespace",
+    "playwright_jsonld": "playwright_jsonld",
+}
+
+
+def get_scraper(source, config) -> BaseScraper | None:
+    """Instantiate the right scraper for a Source row."""
+    cls = _TYPE_MAP.get(source.type)
+    if cls is None:
+        return None
+
+    # Regional aggregators don't use URL/venue_name from source
+    if source.type in ("ticketmaster", "eventbrite", "meetup", "fathom"):
+        return cls(config)
+
+    return cls(config, source_url=source.url or "", venue_name=source.display_name or "")
+
+
+def scraper_types() -> list[tuple[str, str]]:
+    """Return (type_key, label) pairs for the admin UI type selector."""
+    return [(k, TYPE_LABELS.get(k, k)) for k in _TYPE_MAP]

@@ -1,0 +1,16 @@
+title = "HappenHere gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Ignore example/placeholder values"
+regexes = [
+    "sk_\\.\\.\\.",
+    "ghp_YOUR_TOKEN_HERE",
+]
+paths = [
+    ".env.example",
+    "config.example.yml",
+    "CLAUDE.md",
+]

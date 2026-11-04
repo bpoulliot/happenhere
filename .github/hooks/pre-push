@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Runs gitleaks on staged/committed changes before push.
+# Install: cp .github/hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+# Or use: git config core.hooksPath .github/hooks
+
+if command -v gitleaks &>/dev/null; then
+    gitleaks protect --staged --redact --config .gitleaks.toml 2>&1
+    if [ $? -ne 0 ]; then
+        echo "gitleaks: secrets detected — push blocked. Fix or add to allowlist."
+        exit 1
+    fi
+else
+    echo "Warning: gitleaks not installed locally. Install from https://github.com/gitleaks/gitleaks"
+    echo "Skipping local secret scan — CI will catch secrets on push."
+fi
