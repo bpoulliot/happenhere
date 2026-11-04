@@ -20,8 +20,9 @@ from ..db import get_session
 from ..ical_export import generate_ics
 from ..jobs import run_single_scraper
 from ..models import Event, Source
-from ..netguard import NonPublicURL, require_public_url
+from ..netguard import NonPublicURL
 from ..scrapers.registry import TYPE_LABELS, scraper_types
+from ..sources import check_source_url, split_categories
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -463,16 +464,15 @@ async def source_create(
     enabled: str = Form("off"),
 ):
     name = _slugify(display_name)
-    if url:
-        try:
-            require_public_url(url)
-        except NonPublicURL:
-            log.warning("source URL refused (non-public or unresolvable): %s", url, exc_info=True)
-            return PlainTextResponse(
-                "Source URL refused: it must be http(s) and resolve to a public address.",
-                status_code=400,
-            )
-    cats = [c.strip() for c in categories.split(",") if c.strip()]
+    try:
+        check_source_url(url)
+    except NonPublicURL:
+        log.warning("source URL refused (non-public or unresolvable): %s", url, exc_info=True)
+        return PlainTextResponse(
+            "Source URL refused: it must be http(s) and resolve to a public address.",
+            status_code=400,
+        )
+    cats = split_categories(categories)
     with get_session() as session:
         # Ensure unique name
         base = name
@@ -502,16 +502,15 @@ async def source_update(
     categories: str = Form(""),
     enabled: str = Form("off"),
 ):
-    if url:
-        try:
-            require_public_url(url)
-        except NonPublicURL:
-            log.warning("source URL refused (non-public or unresolvable): %s", url, exc_info=True)
-            return PlainTextResponse(
-                "Source URL refused: it must be http(s) and resolve to a public address.",
-                status_code=400,
-            )
-    cats = [c.strip() for c in categories.split(",") if c.strip()]
+    try:
+        check_source_url(url)
+    except NonPublicURL:
+        log.warning("source URL refused (non-public or unresolvable): %s", url, exc_info=True)
+        return PlainTextResponse(
+            "Source URL refused: it must be http(s) and resolve to a public address.",
+            status_code=400,
+        )
+    cats = split_categories(categories)
     with get_session() as session:
         src = session.query(Source).filter_by(name=source_name).first()
         if src:
