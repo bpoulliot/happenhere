@@ -23,7 +23,7 @@ item that is not READY.
   narrowest count) and the Docker build. `main` takes changes only through a PR with all of them
   green.
 
-**Next free item number: 13.** Always re-read it here before filing.
+**Next free item number: 14.** Always re-read it here before filing.
 
 ## Items
 
@@ -41,6 +41,7 @@ item that is not READY.
 | 10 | 0 | Web-framework bump: FastAPI and uvicorn (Starlette moves with them) | **READY** |
 | 11 | 3 | Facebook and Instagram as event sources; reading event flyers with a vision model | **NEEDS MEASUREMENT** |
 | 12 | 1 | Ticketing platforms as built-in source options (Eventbrite, DICE, Bandsintown, See Tickets, Etix) | **NEEDS MEASUREMENT** |
+| 13 | 1 | Local scraper plugins: extra source types loaded from a directory outside the repo | **READY** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -187,3 +188,29 @@ JSON-LD on venue pages, an iCal export, or JS-rendered only), what a request ret
 venue, and the rate limits. Then build one source type per platform that has a sanctioned or
 structured path, each with saved-fixture tests (no live site in CI) and a detection rule; a platform
 with no such path is recorded as such, not scraped around.
+
+### 13 — Local scraper plugins — READY
+
+**Why:** some venues need a scraper written for their one site. That code is about a particular
+place, so it does not belong in this generic repository, yet a deployment needs it. A deployment
+keeps such scrapers in its own directory and the app loads them as extra source types.
+
+**Spec:**
+1. `plugins_dir` in config (env `PLUGINS_DIR`); unset means no plugins.
+2. At start-up every `*.py` directly in it is imported (as `happenhere_plugins.<stem>`). Each
+   `BaseScraper` subclass defined there with a `SOURCE_TYPE` is registered under that type, with
+   `TYPE_LABEL` (or the class name) as its admin label. Same constructor contract as the built-ins
+   (`config`, `source_url`, `venue_name`).
+3. **Failure never stops the app:** a module that fails to import is skipped and logged at ERROR
+   with its traceback; a `SOURCE_TYPE` that collides with a built-in or another plugin is refused and
+   logged. The admin page lists loaded plugins and load errors.
+4. The plugin API is `app.scrapers.base` (`BaseScraper`, `EventData`, `DEFAULT_HEADERS`) and the
+   shared bases (`_html_base`, `_ical_base`, `_playwright_base`); document it in `CLAUDE.md`.
+5. **Security:** a plugin is code running with the app's privileges. It is loaded only from the
+   configured directory, never from the database, an upload or a URL. Document that the directory
+   must be writable only by the operator, and mount it read-only.
+6. Detection (`app/discovery.py`) is unchanged: a plugin type is chosen by hand in the source form.
+
+**Tests** (a temp plugin dir): a good plugin registers and scrapes a saved fixture; a module with a
+syntax error is skipped and logged while the app starts; a colliding type is refused; no
+`PLUGINS_DIR` loads nothing; the admin page renders the plugin list.
