@@ -37,6 +37,21 @@ Conventional Commits: `feat:`, `fix:`, `chore:`, `refactor:`.
 - Playwright only through `PlaywrightScraper` (launch and close on one thread).
 - No Alembic — use `create_all` + `_migrate_schema` pattern (see `app/db.py`).
 
+## Source import/export
+
+A deployment keeps its source list in a YAML file outside this repo and loads it with:
+
+```bash
+python -m app.sources export > sources.yml             # every source, YAML to stdout
+python -m app.sources import sources.yml               # dry run: prints the add/update/unchanged/missing plan
+python -m app.sources import sources.yml --apply       # write it (one transaction)
+python -m app.sources import sources.yml --apply --disable-missing   # also disable sources not in the file
+```
+
+Keyed by `name`; never deletes; a bad entry (unknown type, non-public URL, ...) refuses the whole
+file. Inside the container: `docker exec <container> python -m app.sources ...` (add
+`--db <path>` to name another database).
+
 ## Adding a New Scraper
 
 1. Create `app/scrapers/generic.py` or a new file implementing `BaseScraper`.
