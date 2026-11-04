@@ -56,6 +56,9 @@ class Config:
     oidc_username_claim: str = "preferred_username"
     public_url: str = ""  # e.g. https://events.example.org, for the OIDC redirect URI
 
+    # Directory of local scraper plugins (extra source types); empty = none. See CLAUDE.md.
+    plugins_dir: str = ""
+
     # Feature flags
     require_login_to_view: bool = False  # if True, even event browsing needs login
 
@@ -172,6 +175,7 @@ def _apply_env(cfg: Config) -> None:
         "OIDC_SCOPES": "oidc_scopes",
         "OIDC_USERNAME_CLAIM": "oidc_username_claim",
         "PUBLIC_URL": "public_url",
+        "PLUGINS_DIR": "plugins_dir",
         "REQUIRE_LOGIN_TO_VIEW": (
             "require_login_to_view",
             lambda v: v.lower() in ("1", "true", "yes"),

@@ -17,6 +17,7 @@ from . import auth as _auth
 from . import oidc as _oidc
 from .config import load_config, save_auth
 from .db import init_db
+from .plugins import load_plugins
 from .scheduler import start, stop
 from .web.routes import router
 
@@ -105,6 +106,7 @@ async def lifespan(app: FastAPI):
         create_password=cfg.auth_mode == "local",
     )
     _oidc.configure(cfg)
+    load_plugins(cfg.plugins_dir)
     init_db()
     from .jobs import run_all_scrapers, send_daily_digest
 

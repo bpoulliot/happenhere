@@ -304,9 +304,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
+    from .config import get_config
     from .db import get_session, init_db
+    from .plugins import load_plugins
 
     init_db(args.db)
+    load_plugins(get_config().plugins_dir)  # a plugin's source type is valid in the file
     if args.cmd == "export":
         with get_session() as session:
             sys.stdout.write(export_yaml(session))

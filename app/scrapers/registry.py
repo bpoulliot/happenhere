@@ -77,6 +77,19 @@ def get_scraper(source, config) -> BaseScraper | None:
     return cls(config, source_url=source.url or "", venue_name=source.display_name or "")
 
 
+def register_type(key: str, cls: type[BaseScraper], label: str) -> None:
+    """Add a scraper type (used by the plugin loader). Never replaces a registered type."""
+    if key in _TYPE_MAP:
+        raise ValueError(f"scraper type {key!r} is already registered")
+    _TYPE_MAP[key] = cls
+    TYPE_LABELS[key] = label
+
+
+def unregister_type(key: str) -> None:
+    _TYPE_MAP.pop(key, None)
+    TYPE_LABELS.pop(key, None)
+
+
 def scraper_types() -> list[tuple[str, str]]:
     """Return (type_key, label) pairs for the admin UI type selector."""
     return [(k, TYPE_LABELS.get(k, k)) for k in _TYPE_MAP]

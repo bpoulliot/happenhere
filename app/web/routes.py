@@ -21,6 +21,7 @@ from ..ical_export import generate_ics
 from ..jobs import run_single_scraper
 from ..models import Event, Source
 from ..netguard import NonPublicURL
+from ..plugins import get_report as get_plugin_report
 from ..scrapers.registry import TYPE_LABELS, scraper_types
 from ..sources import check_source_url, split_categories
 
@@ -406,6 +407,7 @@ async def admin_page(request: Request):
             "next_scrape": next_scrape_time(),
             "city_name": cfg.city_name or "(not configured)",
             "scraper_types": scraper_types(),
+            "plugins": get_plugin_report(),
         },
     )
 
@@ -568,6 +570,7 @@ async def trigger_scrape(request: Request, source_name: str):
             "next_scrape": next_scrape_time(),
             "city_name": cfg.city_name or "(not configured)",
             "scraper_types": scraper_types(),
+            "plugins": get_plugin_report(),
             "scrape_result": result,
             "scrape_source": source_name,
         },
