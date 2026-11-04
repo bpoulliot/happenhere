@@ -59,6 +59,33 @@ file. Inside the container: `docker exec <container> python -m app.sources ...` 
 3. Add to `_TYPE_MAP` in `app/scrapers/registry.py` with a unique type key.
 4. Add a label to `TYPE_LABELS` in registry.py.
 
+A scraper for one particular site does not belong in this repository: write it as a plugin.
+
+## Local scraper plugins
+
+A deployment keeps site-specific scrapers in its own directory, outside the repo, and sets
+`plugins_dir` in `config.yml` (or env `PLUGINS_DIR`). Unset means no plugins.
+
+- At start-up every `*.py` directly in that directory is imported as `happenhere_plugins.<stem>`
+  (a sibling can be imported as `happenhere_plugins.<other>`). Each class **defined in that module**
+  that subclasses `BaseScraper`, is not abstract and sets `SOURCE_TYPE` in its own body is registered
+  under that type. `TYPE_LABEL` (default: the class name) is the label in the admin type selector.
+- `SOURCE_TYPE` is `[a-z0-9][a-z0-9_-]*` and must be new: one that collides with a built-in type or an
+  earlier plugin (modules load in file-name order) is refused, never overridden.
+- The constructor contract is the built-ins': `__init__(self, config, source_url="", venue_name="")`;
+  `scrape()` returns `list[EventData]`; `close()` is optional.
+- The API a plugin may rely on is `app.scrapers.base` (`BaseScraper`, `EventData`, `DEFAULT_HEADERS`)
+  and the shared bases `app.scrapers._html_base`, `_ical_base`, `_playwright_base`. Playwright only
+  through `PlaywrightScraper`; a fetch of a user-provided URL goes through `app/netguard.py`.
+- A module that fails to import (syntax error, exception, `sys.exit`) is skipped and logged at ERROR with
+  its traceback; the app still starts. `/admin` shows a "Plugins" panel with what loaded and what failed.
+- `python -m app.sources` loads the plugins too, so a plugin's type is valid in a `sources.yml`.
+- Auto-detection (`app/discovery.py`) is unchanged: a plugin type is chosen by hand in the source form.
+- **Security:** a plugin is code running with the app's privileges. It is loaded only from the
+  configured directory, never from the database, an upload or a URL. The directory must be writable
+  only by the operator; mount it read-only into the container (`./plugins:/app/plugins:ro`).
+  Nothing in the admin UI can add or change a plugin.
+
 ## Key Architecture
 
 - Sources are user-managed in the DB (no hardcoded seed list for venues).
