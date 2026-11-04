@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Form, Query, Request, Response
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import joinedload
 
@@ -666,6 +666,14 @@ async def settings_save(
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
+
+
+@router.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    # Browsers and feed readers ask for /favicon.ico directly, whatever the page links.
+    return FileResponse(
+        Path(__file__).parent / "static" / "brand" / "favicon.ico", media_type="image/x-icon"
+    )
 
 
 @router.get("/health")

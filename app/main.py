@@ -23,7 +23,16 @@ from .web.routes import router
 _version_file = Path(__file__).parent.parent / "VERSION"
 _version = _version_file.read_text().strip() if _version_file.exists() else "dev"
 
-_PUBLIC_PREFIXES = ("/static", "/login", "/logout", "/auth", "/health", "/feed", "/api")
+_PUBLIC_PREFIXES = (
+    "/static",
+    "/favicon.ico",
+    "/login",
+    "/logout",
+    "/auth",
+    "/health",
+    "/feed",
+    "/api",
+)
 _ADMIN_PREFIXES = ("/admin",)
 
 

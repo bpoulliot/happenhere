@@ -3,14 +3,20 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PeakEvents — Sign in</title>
+<title>HappenHere — Sign in</title>
+  <link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
+  <link rel="manifest" href="/static/brand/site.webmanifest">
+  <meta name="theme-color" content="#0f1117">
 <style>
   :root { --bg: #0f1117; --surface: #1a1d27; --border: #2e3147; --text: #e2e8f0; --muted: #7a8399; --accent: #00d4ff; --red: #f87171; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font: 14px/1.5 "Segoe UI", system-ui, sans-serif; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 32px 40px; width: 340px; }
   .logo-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 24px; }
-  .logo-row .icon { font-size: 32px; }
+  .logo-row .icon { width: 44px; height: 44px; }
+  .logo-row .here { background: linear-gradient(90deg, #7c6af7, #f472b6); -webkit-background-clip: text; background-clip: text; color: transparent; }
   .logo-row h1 { font-size: 22px; font-weight: 700; }
   label { display: block; font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 4px; margin-top: 14px; text-transform: uppercase; letter-spacing: .5px; }
   input[type=text], input[type=password] {
@@ -28,8 +34,8 @@
 <body>
 <div class="card">
   <div class="logo-row">
-    <span class="icon">⛰</span>
-    <h1>PeakEvents</h1>
+    <img src="/static/brand/mark.svg" alt="" class="icon" width="44" height="44">
+    <h1>happen<span class="here">here</span></h1>
   </div>
 
   {% if error %}
