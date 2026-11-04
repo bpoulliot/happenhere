@@ -45,3 +45,7 @@ digest_time: "09:00"
 # --- Misc ---
 db_path: "/app/data/happenhere.db"
 log_level: "INFO"
+
+# --- Sources ---
+# Sources live in the database. To keep them in a file: `python -m app.sources export > sources.yml`,
+# edit, then `python -m app.sources import sources.yml` (dry run) and `... --apply`. See CLAUDE.md.

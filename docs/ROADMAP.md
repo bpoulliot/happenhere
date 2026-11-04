@@ -33,7 +33,7 @@ item that is not READY.
 | 02 | 1 | OpenID Connect admin sign-in (group-gated, local login disabled); every HTML page rendering | **DONE** |
 | 03 | 1 | Feeds by tag and by venue, stable event UIDs, "add to calendar" links | **READY** |
 | 04 | 1 | Personal feeds behind a long random token; an "artists I listen to" feed | **NEEDS MEASUREMENT** |
-| 05 | 1 | Idempotent source import/export from a YAML file | **READY** |
+| 05 | 1 | Idempotent source import/export from a YAML file | **DONE** |
 | 06 | 2 | Per-source canary: a source that returns zero events or keeps failing raises one alert | **READY** |
 | 07 | 0 | Deprecations that will break: `datetime.utcnow()`, `ORJSONResponse`, authlib/Starlette on `httpx` | **READY** |
 | 08 | 2 | Release workflow without a personal access token, compatible with a PR-only `main` | **NEEDS DECISION** |
@@ -108,7 +108,7 @@ token per feed (rotatable one at a time), because calendar apps cannot send cred
 how many artists the inputs give, how event titles name performers across source types, and the
 match rate on a synthetic set before choosing a matcher.
 
-### 05 — Source import/export — READY
+### 05 — Source import/export — DONE
 
 `python -m app.sources export > sources.yml` and `python -m app.sources import sources.yml
 [--apply]` (dry run by default; prints the add/update/unchanged/would-disable plan). Keyed by
@@ -116,6 +116,21 @@ source `name`; fields: display name, type, URL, categories, tags (item 03 if lan
 with a warning), enabled. Import never deletes: a source missing from the file is reported, and
 disabled only with `--disable-missing`. Every URL passes `netguard`. Round-trip test:
 export → import is a no-op.
+
+**Built:** `app/sources.py`, tests in `tests/test_sources_io.py`.
+
+    python -m app.sources [--db PATH] export > sources.yml
+    python -m app.sources [--db PATH] import FILE [--apply] [--disable-missing]
+
+The file is `sources:` with one mapping per source (`name`, `type` required; `display_name`, `url`,
+`categories`, `tags`, `enabled` optional). The whole file is validated first (known type, a name,
+every URL through `netguard`, no unknown fields, no duplicate names) and a bad entry refuses the
+import, each one named, exit status 1. The write is one transaction. The admin form and the
+importer share `check_source_url` and `split_categories`. `tags` is ignored with one warning until
+item 03 adds the field to the model (item 03 must then store it and replace
+`test_tags_ignored_with_one_warning_without_model_field`). Finding: a URL that does not resolve
+refuses the import, so an export of a database holding a source whose host has gone away does not
+re-import until that entry is fixed; the same rule as saving it in the admin form.
 
 ### 06 — Per-source canary — READY
 
