@@ -31,7 +31,7 @@ item that is not READY.
 |---|---|---|---|
 | 01 | 0 | Green CI; blocking CodeQL; Chromium leak; bcrypt; SSRF guard; fail-closed auth | **DONE** |
 | 02 | 1 | OpenID Connect admin sign-in (group-gated, local login disabled); every HTML page rendering | **DONE** |
-| 03 | 1 | Feeds by tag and by venue, stable event UIDs, "add to calendar" links | **READY** |
+| 03 | 1 | Feeds by tag and by venue, stable event UIDs, "add to calendar" links | **DONE** |
 | 04 | 1 | Personal feeds behind a long random token; an "artists I listen to" feed | **NEEDS MEASUREMENT** |
 | 05 | 1 | Idempotent source import/export from a YAML file | **DONE** |
 | 06 | 2 | Per-source canary: a source that returns zero events or keeps failing raises one alert | **READY** |
@@ -64,7 +64,7 @@ that scope), PKCE, 12 h sessions keyed per mode, `next` carried in the session, 
 redirect. Found while testing: every HTML page except `/login` crashed on current Starlette (old
 `TemplateResponse` signature); every page now has a render test (`tests/test_oidc.py`).
 
-### 03 — Feeds by tag and by venue — READY
+### 03 — Feeds by tag and by venue — DONE
 
 **Why:** one combined feed cannot be filtered in a calendar app. A subscriber wants, e.g., one
 calendar per region and type, each with its own colour and toggle.
@@ -101,6 +101,66 @@ calendar per region and type, each with its own colour and toggle.
 then passes); look-ahead boundary; ETag round trip; the `/feeds` page renders.
 
 **Not in scope:** personal/tokened feeds (item 04); source import (item 05).
+
+**Findings (item 03 session).**
+
+*Failing first.* A synthetic iCal source (`UID:evt-1@example.com`), its event retitled "Quartet
+Night" → "Quartet Night — SOLD OUT" between two `upsert_events` calls, on `main` before this change
+(`tests/test_feeds.py::test_uid_is_stable_when_an_ical_event_is_retitled`):
+
+    UIDs before the retitle: ['9df43ee3…bd58@peakevents']
+    UIDs after the retitle:  ['9df43ee3…bd58@peakevents', 'e4d8dcb9…b5ac@peakevents']
+
+The UID changed **and the old event stayed**: the dedup hash is title + date + venue, so the retitled
+event was stored as a new row and the old row stayed in every feed until its date passed. **The ghost
+is the dedup defect itself**, so the dedup lookup changed with the UID: a stable UID on top of
+title-keyed rows would have put two events with one UID in the feed.
+
+*How each built-in type identifies an event* (what `identity()` in `app/dedup.py` gets):
+
+| Type | Identity the source gives | Kind used |
+|---|---|---|
+| `ical` | the VEVENT `UID` (+ `RECURRENCE-ID` for an overridden occurrence) | `uid` |
+| `ticketmaster` | the Discovery API event `id` | `uid` |
+| `jsonld`, `playwright_jsonld` | schema.org `url`, else `@id` | `url`; `slot` if absent or the listing page |
+| `squarespace` | the event's `.eventlist-title a` link, else the page URL | `url`, else `slot` |
+| `spothopper` | a card link if the card has one, else the page URL | `url`, else `slot` |
+| `eventbrite` | the event card's link | `url` |
+| `meetup` | the event card's link | `url` |
+| `fathom` | the film's page, **shared by every date of that film** | collides in the batch → dedup hash |
+| plugins | whatever the plugin sets: `source_uid`, else `url` | as set |
+
+*The rule as built.* Identity key = sha256(source name, kind, value): `uid` the source's own event id,
+`url` the event URL (fragment and trailing slash dropped; not the source's own URL), `slot` start
+time + normalised venue. The title is never in it. A re-scrape is matched on the identity key first
+(and then takes the new start time and venue too, since the source says it is the same event), then
+on the dedup hash as before (which still merges one event from two sources). Two events in one
+scrape with the same key (a weekly series under one URL, a film's dates, two events in one slot) have
+no usable identity and fall back to the dedup hash alone. `events.uid` is written once at insert
+(`<identity key or dedup hash>@happenhere`) and never changes; rows stored before this item keep
+`<dedup hash>@peakevents`, frozen before their dedup hash is ever rewritten, so an upgrade changes no
+existing UID. The digest's `event_identity` is the same UID (old rows: the dedup hash, as before), so
+an upgrade changes no digest fingerprint either.
+
+**Still on a hash:** Fathom (every film with more than one date), any source that lists a series under
+one URL, and any two events sharing a start time and venue in a source with no event URL. A retitle of
+one of those still makes a new UID and a ghost. `spothopper` cards without a link use `slot`, so a
+retitle is safe there; a time change keeps the UID but not the new time (item 15).
+
+*Mutants* (each applied alone, then reverted; all three killed, the unmutated file passed 24/24):
+
+    M1 identity key built from the title           → test_uid_is_stable_when_an_ical_event_is_retitled FAILED
+    M2 feed UID = the title-based dedup hash       → test_uid_is_stable_when_an_ical_event_is_retitled FAILED
+    M3 tag intersection matches ANY tag            → test_a_tag_intersection_needs_every_tag FAILED
+
+*URL forms, as built:* `/feed/all.ics` (alias `/feed/events.ics`), `/feed/tags/<tag>[+<tag>...].ics`,
+`/feed/venue/<source-name>.ics`, the page `/feeds`. `X-WR-CALNAME` `<site_name>` or
+`<site_name> — music + downtown` / `— <source display name>`; `PRODID -//happenhere//happenhere//EN`.
+New config: `site_name` (default "HappenHere"), `feed_lookahead_days` (365). `DTSTAMP` is the row's
+`last_seen`, so an unchanged feed is byte-identical and its `ETag` holds between scrapes. Schema:
+`events.identity_key`, `events.uid` (indexed) and `sources.tags`, added by `_migrate_schema` at
+start-up. The `tags` seam in the import (item 05) is now live. Item 04 can add a tokened route beside
+these on `_feed_response` without changing them.
 
 ### 04 — Personal feeds and an "artists I listen to" feed — NEEDS MEASUREMENT
 
@@ -468,6 +528,11 @@ all keep the old time. Reproduced with two `upsert_events` calls on a synthetic 
 call leaves `start_dt` at 19:00. **Spec:** update `start_dt` on a seen event, and let item 03's
 stable UID decide what counts as "the same event" first (the feed UID must not change when a time
 does). **Test:** the reproduction above, plus a feed test that the UID is unchanged by the edit.
+
+*Since item 03:* an event matched on its identity key (a source UID or event URL) already takes the
+new `start_dt` and `venue_name` (`test_a_moved_event_keeps_its_uid_and_its_new_time`). What is left
+is the dedup-hash match: a `slot`-identity event whose time moves within the day (its key changes,
+the hash matches), and a hash-fallback event. The reproduction above (no URL, no UID) still holds.
 
 ### 16 — Eventbrite: the regional scraper against the terms; a sanctioned path — NEEDS DECISION
 

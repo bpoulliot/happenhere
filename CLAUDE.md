@@ -74,6 +74,8 @@ A deployment keeps site-specific scrapers in its own directory, outside the repo
   earlier plugin (modules load in file-name order) is refused, never overridden.
 - The constructor contract is the built-ins': `__init__(self, config, source_url="", venue_name="")`;
   `scrape()` returns `list[EventData]`; `close()` is optional.
+- Set `EventData.source_uid` when the site gives an event id, else the event's own `url`: they decide
+  the event's feed UID (see "Feeds"). Never put the title in either.
 - The API a plugin may rely on is `app.scrapers.base` (`BaseScraper`, `EventData`, `DEFAULT_HEADERS`)
   and the shared bases `app.scrapers._html_base`, `_ical_base`, `_playwright_base`. Playwright only
   through `PlaywrightScraper`; a fetch of a user-provided URL goes through `app/netguard.py`.
@@ -85,6 +87,26 @@ A deployment keeps site-specific scrapers in its own directory, outside the repo
   configured directory, never from the database, an upload or a URL. The directory must be writable
   only by the operator; mount it read-only into the container (`./plugins:/app/plugins:ro`).
   Nothing in the admin UI can add or change a plugin.
+
+## Feeds
+
+Public, read-only `text/calendar`, `ETag` + `Cache-Control: public, max-age=900` (a matching
+`If-None-Match` gets `304`), reaching `feed_lookahead_days` ahead (default 365):
+
+- `/feed/all.ics` (`/feed/events.ics` is an alias, kept for existing subscriptions);
+- `/feed/tags/<tag>[+<tag>...].ics`: events whose source carries **every** listed tag;
+- `/feed/venue/<source-name>.ics`: one source.
+
+An unknown tag or source is a 404. Tags are slugs (`[a-z0-9-]`) on a source, set in the admin form or
+`sources.yml`; `categories` only label events in the UI. `/feeds` lists every feed with an upcoming
+event, with copy, `webcal://` and Google Calendar links. Each calendar is named `<site_name>` or
+`<site_name> — <selection>`.
+
+**A feed UID never changes** (`app/dedup.py`): a calendar app keys an event on it. A scraped event is
+matched first on its identity key: the source's own event id (`source_uid`), else its own URL (not the
+listing page), else start time + venue; the title is never part of it. Two events in one scrape with
+the same key fall back to the dedup hash (title + date + venue). `events.uid` is set once at insert;
+rows stored before item 03 keep their old `<dedup_hash>@peakevents` UID.
 
 ## Key Architecture
 
