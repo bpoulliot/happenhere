@@ -38,7 +38,7 @@ item that is not READY.
 | 07 | 0 | Deprecations that will break: `datetime.utcnow()`, `ORJSONResponse`, authlib/Starlette on `httpx` | **READY** |
 | 08 | 2 | Release workflow without a personal access token, compatible with a PR-only `main` | **NEEDS DECISION** |
 | 09 | 0 | Dependency bumps, low risk: CI actions and patch-level libraries (Dependabot) | **DONE** |
-| 10 | 0 | Web-framework bump: FastAPI and uvicorn (Starlette moves with them) | **READY** |
+| 10 | 0 | Web-framework bump: FastAPI and uvicorn (Starlette moves with them) | **DONE** |
 | 11 | 3 | Facebook and Instagram as event sources; reading event flyers with a vision model | **NEEDS DECISION** |
 | 12 | 1 | Ticketing platforms as source options: Ticketmaster-by-venue type, wider JSON-LD, platform recognition | **READY** |
 | 13 | 1 | Local scraper plugins: extra source types loaded from a directory outside the repo | **DONE** |
@@ -198,7 +198,7 @@ branch succeeded and the image imports `apscheduler` 3.11.3 and `python-multipar
 **`release.yml` (manual `workflow_dispatch` only) was not exercised**: its only change is the
 `checkout` bump, and item 08 decides whether it survives at all.
 
-### 10 — FastAPI and uvicorn — READY
+### 10 — FastAPI and uvicorn — DONE
 
 FastAPI's and uvicorn's Dependabot PRs together, because FastAPI moves Starlette, which is not
 pinned here, and Starlette changes have broken every page before (item 02). Read the changelogs
@@ -209,6 +209,52 @@ the count of `DeprecationWarning`s before and after, and a smoke run of a scratc
 from the branch (`AUTH_MODE=local`): `/health`, `/events`, `/events/calendar`, `/feed/events.ics`,
 `/admin` redirect, a local sign-in round trip. Item 07 runs after this one (some of its
 deprecations may change with the bump).
+
+**Findings.** `fastapi` 0.136.3 → 0.162.0 and `uvicorn[standard]` 0.49.0 → 0.54.0 (exactly what
+Dependabot proposed), with `starlette==1.10.0` now pinned in `requirements.txt`.
+
+**Starlette did not move.** The old pins already resolved to Starlette 1.10.0 and 0.162.0
+resolves to the same, so the pin changes nothing today; it stops the next FastAPI bump from
+moving Starlette unseen. The only new package in the install is `opentelemetry-api` 1.45.2
+(Apache-2.0 from its package metadata, 652 KB, requires only `typing-extensions`), a dependency of
+the new FastAPI; the app configures no OpenTelemetry.
+
+| Test run (`pytest -q tests/ -W default`) | Before (`origin/main`) | After |
+|---|---|---|
+| Result | 158 passed | 158 passed |
+| Warnings | 5 | 5, the same five |
+
+The five: `StarletteDeprecationWarning` (`httpx` with `starlette.testclient`, from
+`fastapi/testclient.py`), `AuthlibDeprecationWarning` (`httpx`, from authlib),
+`FastAPIDeprecationWarning` (`ORJSONResponse`, from `app/main.py`), and two `DeprecationWarning`s
+for `datetime.utcnow()` (`app/ical_export.py`). None became an error, none was added or removed;
+all belong to item 07.
+
+Release notes read for every FastAPI version in (0.136.3, 0.162.0] (67 releases) and uvicorn in
+(0.49.0, 0.54.0] (11). What touches code here:
+
+| Change | Version | Here |
+|---|---|---|
+| `router.routes` becomes a tree of router and route objects | FastAPI 0.137.0 | No code reads `router.routes`; the app uses `include_router` twice. Not affected. |
+| Omitted `bool` form fields inferred `False` (0.147), then reverted to the declared default (0.162); empty scalars in form *models* count as missing (0.149); empty file inputs count as missing (0.150) | 0.147 – 0.162 | Not affected: every `Form(...)` here is `str` or `int` (checkbox fields are `str = Form("off")`), no form models, no files. The smoke run posted the settings form with the checkboxes omitted: 302 saved. |
+| Defaults of omitted `Query`/`Form` parameters are not validated | 0.148 | Not affected: defaults are plain, valid values. |
+| JSON `null` body distinct from an omitted body; header/query/cookie parameter models; `**extra` removed from `Query`/`Form`/etc.; `openapi_prefix`/`**extra` removed from `FastAPI()`; `root_path` parameter deprecated | 0.145 – 0.160 | None used (`grep` for each API in `app/`). |
+| OpenTelemetry exporter setup is opt-in | 0.143.0 | Not used. |
+| `ORJSONResponse` deprecated | already in 0.136.3 | Still deprecated in 0.162.0, not removed; behaviour unchanged. Item 07's to fix. |
+| uvicorn: legacy `websockets` implementation deprecated, `auto` defaults to `websockets-sansio` (0.50); `colorama` dropped from `[standard]` (0.51); experimental `zttp`/HTTP/2 opt-in (0.52 – 0.54); `::1` trusted by default for forwarded headers (0.53) | 0.50 – 0.54 | No WebSocket endpoint, no `--http`/`--loop` flag (the `CMD` uses `--proxy-headers` only). The `::1` default adds the IPv6 loopback to the peers whose `X-Forwarded-*` are trusted; the `CMD` sets no `--forwarded-allow-ips`, so only loopback peers qualify either way. |
+
+**Smoke run.** A scratch container from a local build of the branch (`AUTH_MODE=local`, random
+password, anonymous data volume, no published port, `--memory 1g`), driven from inside the container:
+
+* `/health` 200 (`application/json`), `/events` 200, `/events/calendar` 200, `/feed/events.ics` 200
+  `text/calendar; charset=utf-8`.
+* `/admin` without a session: 302 to `/login?next=/admin`. `POST /login` with a wrong password 401;
+  with the right one 302 to `/` with a session cookie; with the cookie `/admin`, `/admin/settings`,
+  `/admin/sources/new` and `/admin/digest` all 200; `POST /admin/settings` 302 `?saved=1`.
+* `docker logs`: real lifespan started (database, scheduler, digest slot), no traceback and no
+  error line; the only warnings are the authlib and `ORJSONResponse` deprecations above.
+
+Local: ruff, black, bandit, pip-audit (no known vulnerabilities), gitleaks clean.
 
 ### 11 — Facebook and Instagram; flyers through a vision model — NEEDS DECISION
 
