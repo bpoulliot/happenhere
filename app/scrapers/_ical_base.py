@@ -79,6 +79,12 @@ def _parse_vevent(component, default_venue: str) -> EventData | None:
     description = str(component.get("DESCRIPTION", "")).strip() or None
     url = str(component.get("URL", "")).strip() or None
 
+    uid = str(component.get("UID", "")).strip() or None
+    rid = component.get("RECURRENCE-ID")
+    if uid and rid is not None:
+        # One overridden occurrence of a recurring event shares the series' UID.
+        uid = f"{uid}#{rid.to_ical().decode()}"
+
     return EventData(
         title=summary,
         start_dt=start,
@@ -88,4 +94,5 @@ def _parse_vevent(component, default_venue: str) -> EventData | None:
         description=description,
         url=url,
         categories=[],
+        source_uid=uid,
     )

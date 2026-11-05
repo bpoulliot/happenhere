@@ -51,6 +51,13 @@
                placeholder="e.g. Brewery, Live Music">
       </div>
       <div class="form-group">
+        <label>Feed tags <small>(comma-separated: a-z, 0-9, -)</small></label>
+        <input type="text" name="tags" pattern="[A-Za-z0-9, -]*"
+               value="{{ (source.tags | join(', ')) if source else '' }}"
+               placeholder="e.g. music, downtown">
+        <small>Each tag is a calendar feed: /feed/tags/music.ics, or /feed/tags/music+downtown.ics for sources with both</small>
+      </div>
+      <div class="form-group">
         <label class="checkbox-label">
           <input type="checkbox" name="enabled" value="on" {{ 'checked' if not source or source.enabled }}>
           Enabled

@@ -236,7 +236,7 @@ def test_local_login_round_trip(use):
 # --- every HTML page renders (Starlette's TemplateResponse(request, name, ctx)) ---
 
 
-@pytest.mark.parametrize("path", ["/events", "/events/calendar", "/partials/event-list"])
+@pytest.mark.parametrize("path", ["/events", "/events/calendar", "/partials/event-list", "/feeds"])
 def test_public_pages_render(use, path):
     use(_cfg(**OIDC))
     with client() as c:

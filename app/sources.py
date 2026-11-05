@@ -50,6 +50,27 @@ def split_categories(categories: str) -> list[str]:
     return [c.strip() for c in categories.split(",") if c.strip()]
 
 
+def split_tags(tags: str) -> list[str]:
+    """The admin form's comma-separated tags, lowercased; ValueError names a non-slug."""
+    out: list[str] = []
+    for t in (t.strip().lower() for t in tags.split(",")):
+        if not t:
+            continue
+        if not _TAG_RE.match(t):
+            raise ValueError(t)
+        if t not in out:
+            out.append(t)
+    return out
+
+
+def source_tags(src: Source) -> list[str]:
+    try:
+        tags = json.loads(src.tags or "[]")
+    except ValueError:
+        return []
+    return [t for t in tags if isinstance(t, str)]
+
+
 # --- Validation --------------------------------------------------------------------------
 
 
@@ -157,17 +178,15 @@ def parse_document(text: str) -> list[dict]:
 
 
 def _current(src: Source) -> dict:
-    cur = {
+    return {
         "name": src.name,
         "display_name": src.display_name or "",
         "type": src.type or "",
         "url": src.url or "",
         "categories": json.loads(src.categories or "[]"),
+        "tags": source_tags(src),
         "enabled": bool(src.enabled),
     }
-    if hasattr(Source, "tags"):
-        cur["tags"] = json.loads(src.tags or "[]")
-    return cur
 
 
 @dataclass
@@ -234,11 +253,6 @@ def build_plan(session: Session, entries: list[dict], disable_missing: bool = Fa
     return plan
 
 
-def _warn_tags_ignored(entries: list[dict]) -> None:
-    if not hasattr(Source, "tags") and any("tags" in e for e in entries):
-        log.warning("tags are not supported by this version of the Source model; ignoring them")
-
-
 def _write(session: Session, plan: Plan) -> None:
     for e in plan.added:
         session.add(Source(**_columns(e)))
@@ -254,7 +268,7 @@ def _write(session: Session, plan: Plan) -> None:
 def _columns(e: dict) -> dict:
     cols = {k: v for k, v in e.items() if k not in ("categories", "tags")}
     cols["categories"] = json.dumps(e["categories"])
-    if "tags" in e and hasattr(Source, "tags"):
+    if "tags" in e:
         cols["tags"] = json.dumps(e["tags"])
     return cols
 
@@ -263,7 +277,6 @@ def run_import(
     session: Session, text: str, apply: bool = False, disable_missing: bool = False
 ) -> Plan:
     entries = parse_document(text)  # raises before anything is written
-    _warn_tags_ignored(entries)
     plan = build_plan(session, entries, disable_missing)
     if apply:
         try:

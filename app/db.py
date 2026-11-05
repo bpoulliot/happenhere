@@ -58,15 +58,24 @@ def _configure_sqlite(dbapi_conn, _connection_record) -> None:
 def _migrate_schema(engine) -> None:
     with engine.connect() as conn:
         event_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(events)"))}
-        for col, typ in {"image_url": "VARCHAR", "categories": "TEXT", "raw_data": "TEXT"}.items():
+        for col, typ in {
+            "image_url": "VARCHAR",
+            "categories": "TEXT",
+            "raw_data": "TEXT",
+            "identity_key": "VARCHAR(64)",
+            "uid": "VARCHAR",
+        }.items():
             if col not in event_cols:
                 conn.execute(text(f"ALTER TABLE events ADD COLUMN {col} {typ}"))
+        for col in ("identity_key", "uid"):
+            conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_events_{col} ON events ({col})"))
 
         source_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(sources)"))}
         for col, typ in {
             "error_count": "INTEGER DEFAULT 0",
             "last_error": "TEXT",
             "categories": "TEXT",
+            "tags": "TEXT",
         }.items():
             if col not in source_cols:
                 conn.execute(text(f"ALTER TABLE sources ADD COLUMN {col} {typ}"))

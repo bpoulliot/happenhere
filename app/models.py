@@ -19,6 +19,7 @@ class Source(Base):
     type = Column(String)  # scraper type key
     url = Column(String)  # events page URL
     categories = Column(Text)  # JSON list e.g. ["Brewery","Live Music"]
+    tags = Column(Text)  # JSON list of slugs; what /feed/tags/<tag>.ics selects on (item 03)
     last_scraped = Column(DateTime)
     enabled = Column(Boolean, default=True, nullable=False)
     error_count = Column(Integer, default=0)
@@ -33,6 +34,11 @@ class Event(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     source_id = Column(Integer, ForeignKey("sources.id"), nullable=False)
     dedup_hash = Column(String(64), unique=True, nullable=False, index=True)
+    # Item 03. identity_key: the source's own identity for the event (see app/dedup.py), the
+    # first thing a re-scrape is matched on. uid: the feed UID, set once and never changed;
+    # NULL on rows from before item 03, which keep their old UID (app/ical_export.feed_uid).
+    identity_key = Column(String(64), index=True)
+    uid = Column(String, index=True)
 
     title = Column(String, nullable=False)
     description = Column(Text)

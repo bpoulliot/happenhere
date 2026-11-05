@@ -31,6 +31,9 @@ class EventData:
     image_url: str | None = None
     categories: list[str] = field(default_factory=list)
     raw_data: dict = field(default_factory=dict)
+    # The source's own identity for this event (an iCal UID, a platform's event id), if it
+    # gives one. It decides the feed UID before the event URL does (app/dedup.py).
+    source_uid: str | None = None
 
     @property
     def dedup_hash(self) -> str:

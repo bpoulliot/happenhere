@@ -118,4 +118,5 @@ def _parse_event(ev: dict) -> EventData | None:
         image_url=img,
         categories=cats,
         raw_data={"id": ev.get("id"), "source": "ticketmaster"},
+        source_uid=ev.get("id") or None,
     )

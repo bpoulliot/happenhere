@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import socket
 
 import pytest
@@ -186,14 +185,19 @@ def test_write_failure_rolls_back_everything(session, monkeypatch):
     assert _snapshot(session) == before
 
 
-def test_tags_ignored_with_one_warning_without_model_field(session, caplog):
-    assert not hasattr(Source, "tags")  # item 03 adds it; then this test is replaced
-    text = _doc(_entry("alpha", tags=["north"]), _entry("beta", tags=["south"]))
-    with caplog.at_level(logging.WARNING):
-        _apply(session, text)
-    warnings = [r for r in caplog.records if "tags" in r.getMessage()]
-    assert len(warnings) == 1
-    assert session.query(Source).filter_by(name="alpha").one() is not None
+def test_tags_round_trip_and_an_absent_tags_field_leaves_them(session):
+    _apply(session, _doc(_entry("alpha", tags=["north", "music"])))
+    assert json.loads(session.query(Source).filter_by(name="alpha").one().tags) == [
+        "north",
+        "music",
+    ]
+    assert "- north" in sio.export_yaml(session)
+    plan = sio.run_import(session, _doc(_entry("alpha")), apply=True)  # no tags: left alone
+    assert [e["name"] for e in plan.unchanged] == ["alpha"]
+    assert json.loads(session.query(Source).filter_by(name="alpha").one().tags) == [
+        "north",
+        "music",
+    ]
 
 
 def test_tags_must_be_slug_list(session):

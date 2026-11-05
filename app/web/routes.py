@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 import unicodedata
 from datetime import datetime, timedelta
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Form, Query, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
@@ -18,13 +19,13 @@ from .. import digest as _digest
 from .. import oidc as _oidc
 from ..config import get_config, save_config_fields
 from ..db import get_session
-from ..ical_export import generate_ics
+from ..ical_export import feed_rows, generate_ics
 from ..jobs import run_single_scraper
 from ..models import Event, Source
 from ..netguard import NonPublicURL
 from ..plugins import get_report as get_plugin_report
 from ..scrapers.registry import TYPE_LABELS, scraper_types
-from ..sources import check_source_url, split_categories
+from ..sources import _TAG_RE, check_source_url, source_tags, split_categories, split_tags
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -342,18 +343,137 @@ async def calendar_page(request: Request, month: str = ""):
     )
 
 
-@router.get("/feed/events.ics")
-async def ical_feed():
-    with get_session() as session:
-        ics = generate_ics(session)
+# ---------------------------------------------------------------------------
+# Feeds (item 03): /feed/all.ics, /feed/tags/<tag>[+<tag>...].ics, /feed/venue/<source>.ics
+# ---------------------------------------------------------------------------
+
+FEED_MAX_AGE = 900
+
+
+def _calendar_name(selection: str = "") -> str:
+    site = get_config().site_name or "HappenHere"
+    return f"{site} — {selection}" if selection else site
+
+
+def _etag_matches(header: str | None, etag: str) -> bool:
+    if not header:
+        return False
+    if header.strip() == "*":
+        return True
+    return any(t.strip().removeprefix("W/") == etag for t in header.split(","))
+
+
+def _feed_response(
+    request: Request, session, filename: str, selection: str, source_ids: list[int] | None
+) -> Response:
     cfg = get_config()
-    city_slug = re.sub(r"[^\w]", "-", cfg.city_name or "events").lower()
-    return Response(
-        content=ics,
-        media_type="text/calendar; charset=utf-8",
-        headers={
-            "Content-Disposition": f"attachment; filename={city_slug}-events.ics",
-            "Cache-Control": "public, max-age=3600",
+    name = _calendar_name(selection)
+    ics = generate_ics(
+        session,
+        name=name,
+        description=f"Local events from {name}",
+        source_ids=source_ids,
+        lookahead_days=cfg.feed_lookahead_days,
+    )
+    etag = '"' + hashlib.sha256(ics).hexdigest()[:32] + '"'
+    headers = {
+        "ETag": etag,
+        "Cache-Control": f"public, max-age={FEED_MAX_AGE}",
+        "Content-Disposition": f'inline; filename="{filename}"',
+    }
+    if _etag_matches(request.headers.get("if-none-match"), etag):
+        return Response(status_code=304, headers=headers)
+    return Response(content=ics, media_type="text/calendar; charset=utf-8", headers=headers)
+
+
+def _not_found(what: str) -> PlainTextResponse:
+    return PlainTextResponse(f"No such feed: {what}", status_code=404)
+
+
+def _tagged_sources(session) -> list[tuple[Source, list[str]]]:
+    return [(s, source_tags(s)) for s in session.query(Source).order_by(Source.name).all()]
+
+
+@router.get("/feed/all.ics")
+@router.get("/feed/events.ics")  # the original URL, kept for existing subscriptions
+async def feed_all(request: Request):
+    with get_session() as session:
+        return _feed_response(request, session, "all.ics", "", None)
+
+
+@router.get("/feed/tags/{selection}.ics")
+async def feed_tags(request: Request, selection: str):
+    tags = list(dict.fromkeys(selection.split("+")))
+    with get_session() as session:
+        sources = _tagged_sources(session)
+        known = {t for _, ts in sources for t in ts}
+        for t in tags:
+            if not _TAG_RE.match(t) or t not in known:
+                return _not_found(f"tag {t!r}")
+        # Intersection: a source must carry EVERY listed tag.
+        ids = [s.id for s, ts in sources if set(tags) <= set(ts)]
+        return _feed_response(request, session, f"{'+'.join(tags)}.ics", " + ".join(tags), ids)
+
+
+@router.get("/feed/venue/{source_name}.ics")
+async def feed_venue(request: Request, source_name: str):
+    with get_session() as session:
+        src = session.query(Source).filter_by(name=source_name).first()
+        if src is None:
+            return _not_found(f"source {source_name!r}")
+        return _feed_response(
+            request, session, f"{src.name}.ics", src.display_name or src.name, [src.id]
+        )
+
+
+def _feed_links(base: str, path: str) -> dict:
+    http_url = f"{base}{path}"
+    webcal = re.sub(r"^https?://", "webcal://", http_url)
+    return {
+        "url": http_url,
+        "webcal": webcal,
+        "google": "https://calendar.google.com/calendar/r?cid=" + quote(webcal, safe=""),
+    }
+
+
+@router.get("/feeds", response_class=HTMLResponse)
+async def feeds_page(request: Request):
+    """Every feed with at least one upcoming event, with subscribe links."""
+    cfg = get_config()
+    base = (cfg.public_url or str(request.base_url)).rstrip("/")
+    with get_session() as session:
+        rows = feed_rows(session, lookahead_days=cfg.feed_lookahead_days)
+        per_source: dict[int, int] = {}
+        for r in rows:
+            per_source[r.source_id] = per_source.get(r.source_id, 0) + 1
+        sources = _tagged_sources(session)
+    feeds: list[dict] = []
+    if rows:
+        feeds.append({"kind": "all", "label": "All events", "count": len(rows)})
+        feeds[-1].update(_feed_links(base, "/feed/all.ics"))
+    tag_counts: dict[str, int] = {}
+    for s, ts in sources:
+        for t in ts:
+            tag_counts[t] = tag_counts.get(t, 0) + per_source.get(s.id, 0)
+    for t in sorted(tag_counts):
+        if tag_counts[t]:
+            feeds.append({"kind": "tag", "label": t, "count": tag_counts[t]})
+            feeds[-1].update(_feed_links(base, f"/feed/tags/{quote(t)}.ics"))
+    for s, _ in sorted(sources, key=lambda st: (st[0].display_name or st[0].name).lower()):
+        if per_source.get(s.id):
+            feeds.append(
+                {"kind": "venue", "label": s.display_name or s.name, "count": per_source[s.id]}
+            )
+            feeds[-1].update(_feed_links(base, f"/feed/venue/{quote(s.name)}.ics"))
+    return templates.TemplateResponse(
+        request,
+        "feeds.html",
+        {
+            "request": request,
+            "feeds": feeds,
+            "site_name": cfg.site_name or "HappenHere",
+            "tag_example": _feed_links(base, "/feed/tags/<tag>+<tag>.ics")["url"],
+            "lookahead_days": cfg.feed_lookahead_days,
         },
     )
 
@@ -382,6 +502,7 @@ def _src_to_dict(s: Source) -> dict:
         "type_label": TYPE_LABELS.get(s.type or "", s.type or ""),
         "url": s.url or "",
         "categories": json.loads(s.categories or "[]"),
+        "tags": source_tags(s),
         "enabled": s.enabled,
         "last_scraped": s.last_scraped.strftime("%Y-%m-%d %H:%M") if s.last_scraped else "Never",
         "error_count": s.error_count or 0,
@@ -464,6 +585,7 @@ async def source_create(
     scraper_type: str = Form(...),
     url: str = Form(""),
     categories: str = Form(""),
+    tags: str = Form(""),
     enabled: str = Form("off"),
 ):
     name = _slugify(display_name)
@@ -476,6 +598,13 @@ async def source_create(
             status_code=400,
         )
     cats = split_categories(categories)
+    try:
+        tag_list = split_tags(tags)
+    except ValueError as exc:
+        return PlainTextResponse(
+            f"Tag {str(exc)!r} refused: tags are lowercase letters, digits and '-'.",
+            status_code=400,
+        )
     with get_session() as session:
         # Ensure unique name
         base = name
@@ -489,6 +618,7 @@ async def source_create(
             type=scraper_type,
             url=url,
             categories=json.dumps(cats),
+            tags=json.dumps(tag_list),
             enabled=(enabled == "on"),
         )
         session.add(src)
@@ -503,6 +633,7 @@ async def source_update(
     scraper_type: str = Form(...),
     url: str = Form(""),
     categories: str = Form(""),
+    tags: str = Form(""),
     enabled: str = Form("off"),
 ):
     try:
@@ -514,6 +645,13 @@ async def source_update(
             status_code=400,
         )
     cats = split_categories(categories)
+    try:
+        tag_list = split_tags(tags)
+    except ValueError as exc:
+        return PlainTextResponse(
+            f"Tag {str(exc)!r} refused: tags are lowercase letters, digits and '-'.",
+            status_code=400,
+        )
     with get_session() as session:
         src = session.query(Source).filter_by(name=source_name).first()
         if src:
@@ -521,6 +659,7 @@ async def source_update(
             src.type = scraper_type
             src.url = url
             src.categories = json.dumps(cats)
+            src.tags = json.dumps(tag_list)
             src.enabled = enabled == "on"
             session.commit()
     return RedirectResponse("/admin", status_code=302)

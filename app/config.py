@@ -24,6 +24,10 @@ class Config:
     # Scheduling
     scrape_interval_hours: int = 6
 
+    # Feeds (item 03). site_name names every calendar ("<site_name> — music + downtown").
+    site_name: str = "HappenHere"
+    feed_lookahead_days: int = 365  # large venues announce months ahead
+
     # Digest (item 14). Admin-UI settings: deliberately not in the env mapping below, except the
     # older DIGEST_TIME, which still overrides digest_time at every start.
     digest_enabled: bool = True  # does nothing until ntfy is configured

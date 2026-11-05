@@ -46,8 +46,9 @@ DEFAULT_NAME = "HappenHere"
 
 
 def event_identity(ev: Event) -> str:
-    """What makes two rows the same event. Item 03's stable UID replaces this one function."""
-    return ev.dedup_hash
+    """What makes two rows the same event: the feed UID (item 03). A row from before item 03
+    has none and keeps its dedup hash, so its fingerprint does not change on an upgrade."""
+    return ev.uid or ev.dedup_hash
 
 
 def fingerprint(ev: Event) -> str:
