@@ -23,7 +23,7 @@ item that is not READY.
   narrowest count) and the Docker build. `main` takes changes only through a PR with all of them
   green.
 
-**Next free item number: 16.** Always re-read it here before filing.
+**Next free item number: 18.** Always re-read it here before filing.
 
 ## Items
 
@@ -40,10 +40,12 @@ item that is not READY.
 | 09 | 0 | Dependency bumps, low risk: CI actions and patch-level libraries (Dependabot) | **READY** |
 | 10 | 0 | Web-framework bump: FastAPI and uvicorn (Starlette moves with them) | **READY** |
 | 11 | 3 | Facebook and Instagram as event sources; reading event flyers with a vision model | **NEEDS DECISION** |
-| 12 | 1 | Ticketing platforms as built-in source options (Eventbrite, DICE, Bandsintown, See Tickets, Etix) | **NEEDS MEASUREMENT** |
+| 12 | 1 | Ticketing platforms as source options: Ticketmaster-by-venue type, wider JSON-LD, platform recognition | **READY** |
 | 13 | 1 | Local scraper plugins: extra source types loaded from a directory outside the repo | **DONE** |
 | 14 | 1 | Configurable notification digest that never repeats an unchanged list | **DONE** |
 | 15 | 0 | A re-scraped event keeps its first start time: a changed time never reaches the feed or the digest | **READY** |
+| 16 | 1 | Eventbrite: the regional scraper is against the site's terms; an API token or the partner program instead | **NEEDS DECISION** |
+| 17 | 0 | Hard-coded `America/Denver`: parsed times and the ICS feed ignore the configured timezone | **READY** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -226,7 +228,7 @@ endpoint and model from config and never assumes one host.
 
    (b) is worth building only if the admin will actually paste flyers. It adds no unattended source.
 
-### 12 — Ticketing platforms as built-in source options — NEEDS MEASUREMENT
+### 12 — Ticketing platforms as built-in source options — READY
 
 Make the common ticketing platforms first-class source types, offered in the admin "add source"
 form and recognised by auto-detection from a pasted URL: **Eventbrite** (today only a regional
@@ -236,6 +238,30 @@ JSON-LD on venue pages, an iCal export, or JS-rendered only), what a request ret
 venue, and the rate limits. Then build one source type per platform that has a sanctioned or
 structured path, each with saved-fixture tests (no live site in CI) and a detection rule; a platform
 with no such path is recorded as such, not scraped around.
+
+**Measured 2026-11-04** (`docs/measurements/12-ticketing-platforms.md`, with Ticketmaster and AXS
+added for comparison). Only **Ticketmaster** has a sanctioned path that a self-hosted deployment can
+use, through Discovery's `venueId`. **DICE, Bandsintown, See Tickets, Etix and AXS** have no open
+path: their APIs are partner-only or artist-only, or their terms forbid automated reading, and
+every one except DICE refuses a plain HTTP client (403 or a WAF challenge). Each is recorded, and
+none gets a type. **Eventbrite** is a decision, item 16. The measurement also found two gaps in the
+generic JSON-LD reader, which this item fixes:
+* G1: Event subtypes such as `EducationEvent` are dropped.
+* G2: events nested in `Place.event` are dropped. A DICE venue page lists 30 events that way and
+  the reader returns 0.
+
+**Spec:** the measurement doc's "Build spec" section, in four parts:
+1. Generic JSON-LD: G1 and G2, de-duplicated, with fixtures.
+2. A built-in `ticketmaster_venue` type:
+   * pasted URL: a Discovery `venueId` URL, or a ticketmaster.com `/venue/<n>` page resolved once
+     through `venues.json` by its `url`;
+   * the key stays in config;
+   * the paging limit is 1000 items;
+   * the field mapping is given in the doc;
+   * UID identity: `ticketmaster:<event id>`.
+3. Recognition in `discovery.py` of the platforms that cannot be sources, by host and before any
+   request, with a note telling the admin to add the venue's own site.
+4. No types for the five not-buildable platforms.
 
 ### 13 — Local scraper plugins — DONE
 
@@ -363,3 +389,41 @@ all keep the old time. Reproduced with two `upsert_events` calls on a synthetic 
 call leaves `start_dt` at 19:00. **Spec:** update `start_dt` on a seen event, and let item 03's
 stable UID decide what counts as "the same event" first (the feed UID must not change when a time
 does). **Test:** the reproduction above, plus a feed test that the UID is unchanged by the edit.
+
+### 16 — Eventbrite: the regional scraper against the terms; a sanctioned path — NEEDS DECISION
+
+**Found by item 12.** Eventbrite's Terms of Service 13.1 (updated 2025-08-20) say: *"you agree not to
+scrape, crawl, or employ any automated means to extract data from the Sites"*. The built-in
+`eventbrite` type (`app/scrapers/eventbrite.py`) is a Playwright scraper of
+`eventbrite.com/d/<region>/events/`, so it does exactly that. There are two sanctioned paths
+(`docs/measurements/12-ticketing-platforms.md`):
+* **API v3 with a free private token:** `GET /v3/venues/{id}/events/` or
+  `GET /v3/organizations/{id}/events/`. Whether the token reads public events of venues and
+  organizations it does not own is unmeasured. API Terms 4.2 requires the consent of each user whose
+  content is accessed, and the 2019 changelog points multi-creator readers to the distribution
+  partner program. Display rules: title plus a direct link, no past events stored.
+* **The distribution partner program**, for which an operator applies.
+
+**Decisions:**
+1. Remove the `eventbrite` type, or keep it disabled with a warning in the admin form?
+2. Should someone with an Eventbrite account create a private token, so a session can measure
+   whether `venues/{id}/events/` returns events the token does not own? If it does, an
+   `eventbrite_venue` type follows the `ticketmaster_venue` pattern in item 12.
+3. Apply to the partner program, or not?
+
+### 17 — Hard-coded `America/Denver` timezone — READY
+
+**Found by item 12, not fixed there.** Four places convert or emit times in a fixed zone instead of
+the configured one:
+* `_parse_dt` in `app/scrapers/_html_base.py`, which serves every JSON-LD source;
+* `app/scrapers/_ical_base.py`;
+* `app/scrapers/ticketmaster.py`;
+* `_TZ_NAME` in `app/ical_export.py`.
+
+`app/scheduler.py` defaults `TZ` to it as well. Measured: a London venue's JSON-LD
+`startDate` `2026-11-05T19:00:00+00:00` parses to `12:00`. A deployment in any other zone gets
+every offset-carrying time shifted, and its feed labelled with the wrong zone. **Spec:** one helper
+returns the configured zone: `cfg.tz` through `tz_of` in `app/digest.py`, which falls back to `UTC`
+for an unknown zone. All five places use it. **Tests:** a synthetic JSON-LD event with a `+00:00` offset parses to
+local wall-clock time in a configured zone that is not UTC. The ICS `DTSTART` carries the configured
+`TZID`.
