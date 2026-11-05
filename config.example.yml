@@ -13,6 +13,11 @@ tz: "America/Los_Angeles"
 # --- Scheduling ---
 scrape_interval_hours: 6
 
+# --- Feeds ---
+# Every calendar is named after the site: "<site_name>", "<site_name> — music + downtown".
+# site_name: "HappenHere"
+# feed_lookahead_days: 365   # how far ahead a feed reaches
+
 # The digest (ntfy): a list of upcoming events every few days, sent only when something is new
 # or changed since the last digest sent. These are admin-UI settings (Settings > Digest); the
 # file only seeds them. Of the digest settings only DIGEST_TIME is also read from the environment.

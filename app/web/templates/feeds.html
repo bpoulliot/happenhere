@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Calendar feeds{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Calendar feeds</h1>
+</div>
+
+<div class="card">
+  <p class="hint">Subscribe to a feed in your calendar app and it stays up to date by itself.
+    Each feed reaches {{ lookahead_days }} days ahead. Feeds for several tags at once list the
+    events whose source carries every tag: <code>{{ tag_example }}</code></p>
+</div>
+
+{% if feeds %}
+<table class="source-table feeds-table" style="margin-top:1.25rem">
+  <thead><tr><th>Feed</th><th>Events</th><th>Subscribe</th></tr></thead>
+  <tbody>
+  {% for f in feeds %}
+  <tr>
+    <td>{% if f.kind == 'tag' %}<span class="mono">#{{ f.label }}</span>{% else %}{{ f.label }}{% endif %}</td>
+    <td>{{ f.count }}</td>
+    <td class="feed-actions">
+      <input type="text" class="mono feed-url" value="{{ f.url }}" readonly aria-label="Feed URL for {{ f.label }}">
+      <button type="button" class="btn copy-btn" data-url="{{ f.url }}">Copy</button>
+      <a class="btn" href="{{ f.webcal }}">webcal</a>
+      <a class="btn" href="{{ f.google }}" target="_blank" rel="noopener">Google Calendar</a>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="alert alert-warn" style="margin-top:1.25rem">No upcoming events yet, so there is no feed to subscribe to.</div>
+{% endif %}
+
+<script>
+document.querySelectorAll('.copy-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(btn.dataset.url);
+      btn.textContent = 'Copied';
+    } catch (e) {
+      btn.closest('td').querySelector('.feed-url').select();
+      btn.textContent = 'Press Ctrl+C';
+    }
+    setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+  });
+});
+</script>
+{% endblock %}

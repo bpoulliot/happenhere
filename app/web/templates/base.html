@@ -20,7 +20,7 @@
         <a href="/events" {% if request.url.path.startswith('/events') %}class="active"{% endif %}>Events</a>
         <a href="/events/calendar" {% if request.url.path == '/events/calendar' %}class="active"{% endif %}>Calendar</a>
         <a href="/admin" {% if request.url.path.startswith('/admin') %}class="active"{% endif %}>Admin</a>
-        <a href="/feed/events.ics" class="ics-link" title="Subscribe in calendar app">iCal</a>
+        <a href="/feeds" class="ics-link{% if request.url.path == '/feeds' %} active{% endif %}" title="Subscribe in a calendar app">Feeds</a>
       </nav>
     </div>
   </header>
@@ -28,7 +28,7 @@
     {% block content %}{% endblock %}
   </main>
   <footer>
-    <span>{% block footer %}HappenHere · <a href="/feed/events.ics">webcal feed</a> · <a href="/api/events">JSON API</a>{% endblock %}</span>
+    <span>{% block footer %}HappenHere · <a href="/feeds">calendar feeds</a> · <a href="/api/events">JSON API</a>{% endblock %}</span>
   </footer>
 <script>
   function applyPlaceholderBgs(root) {

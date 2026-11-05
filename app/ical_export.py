@@ -11,36 +11,65 @@ from icalendar import (
 )
 from sqlalchemy.orm import Session
 
+from .dedup import legacy_uid
 from .models import Event as EventRow
 
 _TZ_NAME = "America/Denver"
-_LOOKAHEAD_DAYS = 90
+PRODID = "-//happenhere//happenhere//EN"
 
 
-def generate_ics(session: Session) -> bytes:
+def feed_uid(row: EventRow) -> str:
+    """The UID a calendar app keys this event on: set once when the row is stored, never
+    derived from the title (item 03). A row stored before item 03 keeps the UID it had."""
+    return row.uid or legacy_uid(row.dedup_hash)
+
+
+def feed_rows(
+    session: Session,
+    *,
+    source_ids: list[int] | None = None,
+    lookahead_days: int = 365,
+    now: datetime | None = None,
+) -> list[EventRow]:
+    """Upcoming events within the look-ahead, optionally only from some sources."""
+    now = now or datetime.utcnow()
+    q = (
+        session.query(EventRow)
+        .filter(EventRow.start_dt >= now)
+        .filter(EventRow.start_dt <= now + timedelta(days=lookahead_days))
+    )
+    if source_ids is not None:
+        q = q.filter(EventRow.source_id.in_(source_ids))
+    return q.order_by(EventRow.start_dt, EventRow.id).all()
+
+
+def generate_ics(
+    session: Session,
+    *,
+    name: str = "HappenHere",
+    description: str = "",
+    source_ids: list[int] | None = None,
+    lookahead_days: int = 365,
+    now: datetime | None = None,
+) -> bytes:
+    """One calendar. ``name`` is its X-WR-CALNAME; ``source_ids`` (None = every source) and
+    the look-ahead select its events. The same rows always give the same bytes (the ETag)."""
     cal = Calendar()
-    cal.add("prodid", "-//peakevents//Colorado Springs Events//EN")
+    cal.add("prodid", PRODID)
     cal.add("version", "2.0")
     cal.add("calscale", "GREGORIAN")
     cal.add("method", "PUBLISH")
-    cal.add("x-wr-calname", "Colorado Springs Events")
+    cal.add("x-wr-calname", name)
     cal.add("x-wr-timezone", _TZ_NAME)
-    cal.add("x-wr-caldesc", "Local events aggregated by peakevents")
+    cal.add("x-wr-caldesc", description or f"Local events from {name}")
 
     _add_vtimezone(cal)
 
-    cutoff = datetime.utcnow() + timedelta(days=_LOOKAHEAD_DAYS)
-    rows = (
-        session.query(EventRow)
-        .filter(EventRow.start_dt >= datetime.utcnow())
-        .filter(EventRow.start_dt <= cutoff)
-        .order_by(EventRow.start_dt)
-        .all()
-    )
+    rows = feed_rows(session, source_ids=source_ids, lookahead_days=lookahead_days, now=now)
 
     for row in rows:
         vevent = Event()
-        vevent.add("uid", f"{row.dedup_hash}@peakevents")
+        vevent.add("uid", feed_uid(row))
         vevent.add("summary", row.title)
 
         # Treat stored datetimes as Mountain Time (they were stored naive, in local time)
@@ -65,7 +94,10 @@ def generate_ics(session: Session) -> bytes:
         if row.url:
             vevent.add("url", row.url)
 
-        vevent.add("dtstamp", datetime.utcnow().replace(tzinfo=UTC))
+        # When the row was last refreshed, not "now": an unchanged feed is byte-identical,
+        # so its ETag holds. Stored naive in the host's local time.
+        stamp = row.last_seen or row.first_seen or row.start_dt
+        vevent.add("dtstamp", stamp.astimezone(UTC))
 
         cal.add_component(vevent)
 
