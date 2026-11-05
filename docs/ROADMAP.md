@@ -39,7 +39,7 @@ item that is not READY.
 | 08 | 2 | Release workflow without a personal access token, compatible with a PR-only `main` | **NEEDS DECISION** |
 | 09 | 0 | Dependency bumps, low risk: CI actions and patch-level libraries (Dependabot) | **READY** |
 | 10 | 0 | Web-framework bump: FastAPI and uvicorn (Starlette moves with them) | **READY** |
-| 11 | 3 | Facebook and Instagram as event sources; reading event flyers with a vision model | **NEEDS MEASUREMENT** |
+| 11 | 3 | Facebook and Instagram as event sources; reading event flyers with a vision model | **NEEDS DECISION** |
 | 12 | 1 | Ticketing platforms as built-in source options (Eventbrite, DICE, Bandsintown, See Tickets, Etix) | **NEEDS MEASUREMENT** |
 | 13 | 1 | Local scraper plugins: extra source types loaded from a directory outside the repo | **DONE** |
 | 14 | 1 | Configurable notification digest that never repeats an unchanged list | **DONE** |
@@ -175,7 +175,7 @@ from the branch (`AUTH_MODE=local`): `/health`, `/events`, `/events/calendar`, `
 `/admin` redirect, a local sign-in round trip. Item 07 runs after this one (some of its
 deprecations may change with the bump).
 
-### 11 — Facebook and Instagram; flyers through a vision model — NEEDS MEASUREMENT
+### 11 — Facebook and Instagram; flyers through a vision model — NEEDS DECISION
 
 Many small venues announce shows only on Facebook or Instagram. Before any code, a session
 establishes, with dated evidence and the fewest possible requests:
@@ -194,6 +194,37 @@ establishes, with dated evidence and the fewest possible requests:
 
 Decide after the numbers: build (which path), or record why not. Whatever is built takes its
 endpoint and model from config and never assumes one host.
+
+**Measured 2026-11-04** ([`measurements/11-facebook-instagram-vision.md`](measurements/11-facebook-instagram-vision.md)):
+
+* **Facebook:** logged out, a Page's events tab answers an error page (desktop) or a redirect to
+  login (mobile). Graph API access to Page events is restricted to whitelisted partners, and Meta's
+  terms bar automated collection outside the APIs. The personal "upcoming events" iCal export
+  carries a secret key, which makes it a credential, and it was not tested. **No sanctioned path.**
+* **Instagram:** logged out, a profile is a JavaScript shell with no posts. Business Discovery needs
+  an approved Meta app (Advanced Access, Business Verification), and its posts are an image plus a
+  caption, with **no event data.**
+* **Flyers:** 17 public images. The one installed vision model (`gemma3:12b-it-qat`) reads titles
+  (13/17) at about 5 s per flyer. Dates fail both ways. Without "today" in the prompt, 4 of 5
+  printed dates got the wrong year. With "today" and "do not guess", 8 of 12 undated images got
+  today's date. Venue and price are unreliable. Unattended, it would publish events on the wrong day.
+
+**Decision needed (owner):**
+
+1. Record Facebook and Instagram as automated sources **won't-do**: no sanctioned path, per the
+   evidence above. *Recommended.*
+2. Then choose one:
+   * (a) close item 11 as **DONE-WON'T-DO**; or
+   * (b) build a **human-confirmed flyer import**. A session can run it as written:
+     * The admin uploads an image or pastes a public image URL (fetched through `netguard`).
+     * The configured Ollama-compatible endpoint and model (`vision_endpoint`, `vision_model`;
+       unset hides the feature) fill a **draft** event form.
+     * The draft is never published by itself. The date and start-time fields start empty unless
+       the model's value is shown beside them as a suggestion, and an admin must enter or confirm
+       both before saving.
+     * Tests mock the endpoint, and a render test covers the new page.
+
+   (b) is worth building only if the admin will actually paste flyers. It adds no unattended source.
 
 ### 12 — Ticketing platforms as built-in source options — NEEDS MEASUREMENT
 
