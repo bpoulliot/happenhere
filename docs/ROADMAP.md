@@ -37,7 +37,7 @@ item that is not READY.
 | 06 | 2 | Per-source canary: a source that returns zero events or keeps failing raises one alert | **READY** |
 | 07 | 0 | Deprecations that will break: `datetime.utcnow()`, `ORJSONResponse`, authlib/Starlette on `httpx` | **READY** |
 | 08 | 2 | Release workflow without a personal access token, compatible with a PR-only `main` | **NEEDS DECISION** |
-| 09 | 0 | Dependency bumps, low risk: CI actions and patch-level libraries (Dependabot) | **READY** |
+| 09 | 0 | Dependency bumps, low risk: CI actions and patch-level libraries (Dependabot) | **DONE** |
 | 10 | 0 | Web-framework bump: FastAPI and uvicorn (Starlette moves with them) | **READY** |
 | 11 | 3 | Facebook and Instagram as event sources; reading event flyers with a vision model | **NEEDS DECISION** |
 | 12 | 1 | Ticketing platforms as source options: Ticketmaster-by-venue type, wider JSON-LD, platform recognition | **READY** |
@@ -155,7 +155,7 @@ token, which a PR-only `main` refuses. **Question for the owner:** (a) drop rele
 `main` SHAs), (b) release from a tag pushed by hand, the workflow only building and publishing, or
 (c) the workflow opens a version-bump PR and tags after it merges.
 
-### 09 — Dependency bumps, low risk — READY
+### 09 — Dependency bumps, low risk — DONE
 
 The open Dependabot PRs that touch CI actions or patch-level libraries (not FastAPI, Starlette or
 uvicorn: item 10). Each passed CI alone; together they edit the same files. One combined PR with
@@ -164,6 +164,39 @@ action bump (inputs, environment variables, permissions, runtime) and adjusting 
 note requires it. Local checks, a local `docker build`, and CI green on the combined head. The
 superseded Dependabot PRs are closed with a pointer to the combined one. A workflow that only runs
 on a tag or by hand (`release.yml`) is named in the PR as not exercised.
+
+**Findings.** One combined PR with exactly the versions Dependabot proposed. Each source PR had all
+four required checks green on its own head (Lint & Security, Tests, CodeQL, Docker Build & Scan;
+Publish to GHCR skipped by its branch filter).
+
+| Dependabot PR | File(s) | From → to |
+|---|---|---|
+| 1 | `ci.yml` | `gitleaks/gitleaks-action` v2 → v3 (major) |
+| 2 | `requirements.txt` | `apscheduler` 3.11.2 → 3.11.3 |
+| 3 | `requirements.txt` | `python-multipart` 0.0.32 → 0.0.33 |
+| 4 | `pyproject.toml` | `setuptools` build requirement `>=82.0.1` → `>=84.2.1` |
+| 7 | `ci.yml`, `release.yml` | `actions/checkout` v4 → v7 (major, 7 uses) |
+| 8 | `ci.yml` | `hadolint/hadolint-action` 3.1.0 → 3.5.0 (minor) |
+
+Release notes of the versions crossed, and what each means here (no workflow change was needed):
+
+* **gitleaks-action v3:** runtime Node 20 → 24; "no changes to inputs, outputs, or behavior".
+  GitHub drops Node 20 from hosted runners on 2026-09-16, so v2 would have stopped working. The
+  workflow's `GITHUB_TOKEN` env and `pull-requests: read` permission are unchanged.
+* **actions/checkout v5:** Node 24, runner ≥ 2.327.1. **v6:** `persist-credentials` writes the
+  token to a file under `$RUNNER_TEMP` instead of `.git/config` (runner ≥ 2.329.0 for Docker
+  container actions); plain `git` in later steps still works, which is all `release.yml` uses.
+  **v7:** refuses a fork-PR checkout under `pull_request_target` and `workflow_run`, and v5.1/v6.1
+  backport the `allow-unsafe-pr-checkout` input. Neither trigger exists in these workflows (`push`,
+  `pull_request`, `workflow_dispatch` only) and the runners are GitHub-hosted `ubuntu-latest`.
+* **hadolint-action 3.2 – 3.5:** only bumps the bundled Hadolint (to 2.15.1); inputs unchanged.
+* **apscheduler 3.11.3, python-multipart 0.0.33, setuptools 84.2.1:** patch or build-requirement
+  bumps; the image installs `requirements.txt` only, so the `setuptools` line affects no build here.
+
+Local: ruff, black, bandit, pip-audit, gitleaks and pytest (158 passed) clean; `docker build` of the
+branch succeeded and the image imports `apscheduler` 3.11.3 and `python-multipart` 0.0.33.
+**`release.yml` (manual `workflow_dispatch` only) was not exercised**: its only change is the
+`checkout` bump, and item 08 decides whether it survives at all.
 
 ### 10 — FastAPI and uvicorn — READY
 
