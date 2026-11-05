@@ -600,9 +600,9 @@ async def source_create(
     cats = split_categories(categories)
     try:
         tag_list = split_tags(tags)
-    except ValueError as exc:
+    except ValueError:
         return PlainTextResponse(
-            f"Tag {str(exc)!r} refused: tags are lowercase letters, digits and '-'.",
+            "Tags refused: each tag is lowercase letters, digits and '-' (e.g. late-night).",
             status_code=400,
         )
     with get_session() as session:
@@ -647,9 +647,9 @@ async def source_update(
     cats = split_categories(categories)
     try:
         tag_list = split_tags(tags)
-    except ValueError as exc:
+    except ValueError:
         return PlainTextResponse(
-            f"Tag {str(exc)!r} refused: tags are lowercase letters, digits and '-'.",
+            "Tags refused: each tag is lowercase letters, digits and '-' (e.g. late-night).",
             status_code=400,
         )
     with get_session() as session:
