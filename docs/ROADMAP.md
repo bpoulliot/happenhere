@@ -49,7 +49,7 @@ item that is not READY.
 | 18 | 0 | Two same-title shows on one day in one batch abort the whole scrape run (UNIQUE, no rollback) | **READY** |
 | 19 | 0 | Every `ical` and `spothopper` source fails: the generic scrapers have no `SOURCE_NAME` | **DONE** |
 | 20 | 0 | Orphaned Chromium processes are never reaped while uvicorn is PID 1 | **READY** |
-| 21 | 0 | Secrets in logs: request lines and error text carry API keys from query strings | **READY** |
+| 21 | 0 | Secrets in logs: request lines and error text carry API keys from query strings | **DONE** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -631,7 +631,7 @@ browser the app opens; this is the processes Chromium itself leaves. **Spec:** r
 `CMD` and in `CLAUDE.md`'s deployment notes (`docker run --init` for a plain run). **Test (fails
 first):** the example compose file sets `init: true` for the service.
 
-### 21 — Secrets in logs: API keys in request lines and error text — READY
+### 21 — Secrets in logs: API keys in request lines and error text — DONE
 
 **Found in a deployment (2026-11-06).** `httpx` logs every request at `INFO` as `HTTP Request: GET
 <full URL>`, and the Ticketmaster Discovery API takes its key in the query string (`?apikey=...`),
@@ -649,3 +649,29 @@ leaks the same way. **Spec:**
 response of `401`, a scrape run's log output (messages and tracebacks) and the source's
 `last_error` do not contain the key; the redaction unit-tests each parameter name and leaves other
 parameters alone.
+
+**Findings (item 21 session).**
+
+*Failing first.* The same scrape on `main` before this change (logging as `lifespan` set it up, a
+mocked `401` from the Discovery API, a synthetic key): **3 log lines held the key** (httpx's
+`HTTP Request: GET ...?apikey=<key>&...` at `INFO`, and the `Scraper tm failed: Client error '401
+Unauthorized' for url '...apikey=<key>...'` line with its traceback), and `sources.last_error` held it
+too. `tests/test_log_redaction.py` fails on that code (no `configure_logging`), passes after.
+
+*As built.* `app/logredact.py`: `redact(text)` replaces the value of `apikey`, `api_key`, `key`,
+`token`, `access_token`, `client_secret` after `?`, `&` or `;` (case-insensitive; `monkey=`,
+`tokens=` and prose like `key = value` are untouched). `install()` wraps the log-record factory, so
+**every record is redacted at creation**, whatever logger made it and whatever handler writes it
+(uvicorn's, a test's, a plugin's): the message, each argument whose text holds a secret (an
+`httpx.URL` included), and the traceback text (`exc_text`, which formatters use instead of rendering
+`exc_info` again). Arguments keep their shape, because uvicorn's access formatter unpacks
+`record.args` (`test_access_log_args_keep_their_shape`). `app.main.configure_logging(cfg)` installs
+it, calls `basicConfig` as before and sets `httpx`/`httpcore` to `WARNING`; `lifespan` and the import
+CLI call it. `run_all_scrapers`/`run_single_scraper` store `redact(str(exc))` in `last_error`.
+
+*Mutants* (each alone, then reverted): no `install()` in `configure_logging` → 3 tests fail;
+`last_error = str(exc)` → `test_a_failed_request_leaves_no_key_in_the_log_or_the_stored_error` fails.
+
+*Not covered:* a secret in a request **header** never reaches a log line here (ntfy's token is a
+header; httpx does not log headers). A deployment upgrading from before this item still has old log
+lines and old `last_error` values with the key until the log rotates and the source scrapes again.
