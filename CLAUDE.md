@@ -108,6 +108,12 @@ listing page), else start time + venue; the title is never part of it. Two event
 the same key fall back to the dedup hash (title + date + venue). `events.uid` is set once at insert;
 rows stored before item 03 keep their old `<dedup_hash>@peakevents` UID.
 
+## Deployment
+
+- The container needs an init as PID 1: `init: true` in compose (the example `docker-compose.yml`
+  has it), `docker run --init` otherwise. uvicorn as PID 1 does not reap Chromium helper processes
+  that outlive their parent, and they stay as zombies (roadmap item 20).
+
 ## Key Architecture
 
 - Sources are user-managed in the DB (no hardcoded seed list for venues).

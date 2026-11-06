@@ -5,6 +5,10 @@ services:
       dockerfile: Dockerfile
     container_name: happenhere
     restart: unless-stopped
+    # An init as PID 1 reaps Chromium helper processes that outlive their parent; uvicorn as
+    # PID 1 never does, and they pile up as zombies (roadmap item 20). `docker run --init` for a
+    # plain run.
+    init: true
     security_opt:
       - no-new-privileges:true
     env_file:

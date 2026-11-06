@@ -48,7 +48,7 @@ item that is not READY.
 | 17 | 0 | Hard-coded `America/Denver`: parsed times and the ICS feed ignore the configured timezone | **READY** |
 | 18 | 0 | Two same-title shows on one day in one batch abort the whole scrape run (UNIQUE, no rollback) | **READY** |
 | 19 | 0 | Every `ical` and `spothopper` source fails: the generic scrapers have no `SOURCE_NAME` | **READY** |
-| 20 | 0 | Orphaned Chromium processes are never reaped while uvicorn is PID 1 | **READY** |
+| 20 | 0 | Orphaned Chromium processes are never reaped while uvicorn is PID 1 | **DONE** |
 | 21 | 0 | Secrets in logs: request lines and error text carry API keys from query strings | **READY** |
 
 ### 01 — Green CI and safety fixes — DONE
@@ -612,7 +612,7 @@ URL-driven scrapers set it to the source's display name, else its URL, so their 
 source spoke. **Tests (fail first):** a synthetic iCal feed and a synthetic SpotHopper page (mocked
 transport) each return their future event through the generic scraper.
 
-### 20 — Orphaned Chromium never reaped while uvicorn is PID 1 — READY
+### 20 — Orphaned Chromium never reaped while uvicorn is PID 1 — DONE
 
 **Found in a deployment (2026-11-06).** The image starts uvicorn as the container's PID 1, and
 uvicorn does not reap children it did not start. Chromium's helper processes that outlive their
@@ -622,6 +622,14 @@ browser the app opens; this is the processes Chromium itself leaves. **Spec:** r
 `init: true` in the example `docker-compose.yml`, the same requirement written next to the image's
 `CMD` and in `CLAUDE.md`'s deployment notes (`docker run --init` for a plain run). **Test (fails
 first):** the example compose file sets `init: true` for the service.
+
+**Findings (item 20 session).** `tests/test_deploy_example.py` fails on `main` before this change
+(the example compose had no `init`) and passes after. As built: `init: true` in the example
+`docker-compose.yml`, the requirement next to the `Dockerfile`'s `CMD` and under "Deployment" in
+`CLAUDE.md`. Measured in the deployment that found it: after recreating the container with
+`init: true` (Docker's `tini` as PID 1, uvicorn its child), 0 zombies, against 30 before. The image
+itself still starts uvicorn directly: a deployment that drops `init` gets the zombies back, which is
+why the requirement is written in three places rather than only in compose.
 
 ### 21 — Secrets in logs: API keys in request lines and error text — READY
 
