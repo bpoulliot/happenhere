@@ -23,7 +23,7 @@ item that is not READY.
   narrowest count) and the Docker build. `main` takes changes only through a PR with all of them
   green.
 
-**Next free item number: 18.** Always re-read it here before filing.
+**Next free item number: 22.** Always re-read it here before filing.
 
 ## Items
 
@@ -46,6 +46,10 @@ item that is not READY.
 | 15 | 0 | A re-scraped event keeps its first start time: a changed time never reaches the feed or the digest | **READY** |
 | 16 | 1 | Eventbrite: the regional scraper is against the site's terms; an API token or the partner program instead | **NEEDS DECISION** |
 | 17 | 0 | Hard-coded `America/Denver`: parsed times and the ICS feed ignore the configured timezone | **READY** |
+| 18 | 0 | Two same-title shows on one day in one batch abort the whole scrape run (UNIQUE, no rollback) | **READY** |
+| 19 | 0 | Every `ical` and `spothopper` source fails: the generic scrapers have no `SOURCE_NAME` | **READY** |
+| 20 | 0 | Orphaned Chromium processes are never reaped while uvicorn is PID 1 | **READY** |
+| 21 | 0 | Secrets in logs: request lines and error text carry API keys from query strings | **READY** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -571,3 +575,69 @@ returns the configured zone: `cfg.tz` through `tz_of` in `app/digest.py`, which 
 for an unknown zone. All five places use it. **Tests:** a synthetic JSON-LD event with a `+00:00` offset parses to
 local wall-clock time in a configured zone that is not UTC. The ICS `DTSTART` carries the configured
 `TZID`.
+
+### 18 — One source's duplicate batch aborts the whole scrape run — READY
+
+**Found in a deployment (2026-11-04), not fixed there.** Two shows with the same title on the same
+day at the same venue (an early and a late show, common at comedy clubs) share the dedup hash
+(title + date + venue). `upsert_events` (`app/dedup.py`) looks the hash up in the database only, and
+the session has `autoflush=False`, so the second event of the batch does not see the first: both are
+inserted and the commit fails with `UNIQUE constraint failed: events.dedup_hash`. `run_all_scrapers`
+(`app/jobs.py`) then catches it and calls `session.commit()` on the failed session **without
+`rollback()`**, which raises `PendingRollbackError` out of the `except`: the loop ends, every later
+source is skipped, and the run reports nothing. Measured: a scheduled-style run stored 0 events after
+3 s. `run_single_scraper` has the same `except`.
+
+**Spec:**
+1. In one batch, a second event with a hash already taken is the **same event** when its identity
+   key (item 03) is the same or absent (merge: refresh the first row), and a **different event**
+   when its identity key differs (the late show: stored as its own row under a hash that adds the
+   start time, so it never collides with the first).
+2. Every `except` around a source's scrape calls `session.rollback()` before recording the error, so
+   one failing source costs only its own events; the run goes on to the next source.
+
+**Tests (fail first):** a source returning two same-title same-day shows with different URLs, then a
+second source: both shows and the second source's event are stored, and the run completes. A source
+whose `upsert_events` raises mid-batch is recorded with its error, the next source still scrapes.
+
+### 19 — `ical` and `spothopper` sources all fail on `SOURCE_NAME` — READY
+
+**Found in a deployment (2026-11-04).** Every source of type `ical` or `spothopper` fails with
+`'GenericICalScraper' / 'GenericSpotHopperScraper' object has no attribute 'SOURCE_NAME'`: the bases
+(`app/scrapers/_ical_base.py`, `_spothopper_base.py`) log `self.SOURCE_NAME`, `BaseScraper` only
+annotates it, and the generic subclasses never set it. The log call's arguments are evaluated even at
+`DEBUG`, so a feed that parsed fine still raises after parsing, and the source's events are lost.
+**Spec:** `BaseScraper` gives every scraper a `SOURCE_NAME` (default empty), and the generic
+URL-driven scrapers set it to the source's display name, else its URL, so their log lines say which
+source spoke. **Tests (fail first):** a synthetic iCal feed and a synthetic SpotHopper page (mocked
+transport) each return their future event through the generic scraper.
+
+### 20 — Orphaned Chromium never reaped while uvicorn is PID 1 — READY
+
+**Found in a deployment (2026-11-06).** The image starts uvicorn as the container's PID 1, and
+uvicorn does not reap children it did not start. Chromium's helper processes that outlive their
+parent (a crashed renderer, a browser killed on timeout) are re-parented to PID 1 and stay as
+zombies: 30 `chrome-headless-shell` zombies after two days of scheduled scrapes. Item 01 closed every
+browser the app opens; this is the processes Chromium itself leaves. **Spec:** run an init as PID 1:
+`init: true` in the example `docker-compose.yml`, the same requirement written next to the image's
+`CMD` and in `CLAUDE.md`'s deployment notes (`docker run --init` for a plain run). **Test (fails
+first):** the example compose file sets `init: true` for the service.
+
+### 21 — Secrets in logs: API keys in request lines and error text — READY
+
+**Found in a deployment (2026-11-06).** `httpx` logs every request at `INFO` as `HTTP Request: GET
+<full URL>`, and the Ticketmaster Discovery API takes its key in the query string (`?apikey=...`),
+so the key was written to the container log once per request (273 lines in two days). The same URL
+is in `httpx.HTTPStatusError`'s text, which `run_all_scrapers` writes to the log with a traceback and
+stores in `sources.last_error`, shown in the admin UI. Any plugin that passes a key in a query string
+leaks the same way. **Spec:**
+1. `httpx` and `httpcore` loggers at `WARNING` (a per-request line is noise at `INFO`).
+2. One redaction step for every log record, whichever handler writes it, and for the stored
+   `last_error`: the value of a query parameter named `apikey`, `api_key`, `key`, `token`,
+   `access_token`, `client_secret` (case-insensitive) becomes `REDACTED`.
+3. Logging is configured in one function that the app's start-up calls.
+
+**Tests (fail first):** with logging configured as the app configures it and a mocked Ticketmaster
+response of `401`, a scrape run's log output (messages and tracebacks) and the source's
+`last_error` do not contain the key; the redaction unit-tests each parameter name and leaves other
+parameters alone.
