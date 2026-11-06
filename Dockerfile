@@ -61,6 +61,8 @@ LABEL org.opencontainers.image.title="happenhere" \
       org.opencontainers.image.description="Colorado Springs local events aggregator" \
       org.opencontainers.image.version="${BUILD_VERSION}"
 
+# Run with an init as PID 1 (compose `init: true`, `docker run --init`): uvicorn does not reap
+# the Chromium helpers that outlive their parent, and they stay as zombies (roadmap item 20).
 # Proxy headers are trusted only from FORWARDED_ALLOW_IPS (uvicorn's env var; default
 # 127.0.0.1). Set it to the reverse proxy's address, never "*".
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers"]
