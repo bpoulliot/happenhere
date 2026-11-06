@@ -46,7 +46,7 @@ item that is not READY.
 | 15 | 0 | A re-scraped event keeps its first start time: a changed time never reaches the feed or the digest | **READY** |
 | 16 | 1 | Eventbrite: the regional scraper is against the site's terms; an API token or the partner program instead | **NEEDS DECISION** |
 | 17 | 0 | Hard-coded `America/Denver`: parsed times and the ICS feed ignore the configured timezone | **READY** |
-| 18 | 0 | Two same-title shows on one day in one batch abort the whole scrape run (UNIQUE, no rollback) | **READY** |
+| 18 | 0 | Two same-title shows on one day in one batch abort the whole scrape run (UNIQUE, no rollback) | **DONE** |
 | 19 | 0 | Every `ical` and `spothopper` source fails: the generic scrapers have no `SOURCE_NAME` | **DONE** |
 | 20 | 0 | Orphaned Chromium processes are never reaped while uvicorn is PID 1 | **DONE** |
 | 21 | 0 | Secrets in logs: request lines and error text carry API keys from query strings | **DONE** |
@@ -576,7 +576,7 @@ for an unknown zone. All five places use it. **Tests:** a synthetic JSON-LD even
 local wall-clock time in a configured zone that is not UTC. The ICS `DTSTART` carries the configured
 `TZID`.
 
-### 18 — One source's duplicate batch aborts the whole scrape run — READY
+### 18 — One source's duplicate batch aborts the whole scrape run — DONE
 
 **Found in a deployment (2026-11-04), not fixed there.** Two shows with the same title on the same
 day at the same venue (an early and a late show, common at comedy clubs) share the dedup hash
@@ -599,6 +599,32 @@ source is skipped, and the run reports nothing. Measured: a scheduled-style run 
 **Tests (fail first):** a source returning two same-title same-day shows with different URLs, then a
 second source: both shows and the second source's event are stored, and the run completes. A source
 whose `upsert_events` raises mid-batch is recorded with its error, the next source still scrapes.
+
+**Findings (item 18 session).**
+
+*Failing first.* `tests/test_scrape_run.py` (a fake scraper type registered for the test) on `main`
+before this change: all 5 fail, with the deployment's errors: `UNIQUE constraint failed:
+events.dedup_hash`, then `PendingRollbackError` raised out of `run_all_scrapers`' `except`, so the
+next source never ran; `run_single_scraper` raised instead of returning its error. Item 03 did not fix
+it: its `taken_hashes` guarded only the identity-key path, not the hash path.
+
+*As built.* `upsert_events` keeps the batch's rows by dedup hash. A second event with a taken hash is
+the same event when its identity key is the same or absent (refreshed, counted as updated), and a
+different event when its key differs: stored under `timed_hash` (title + start time + venue), so the
+late show is its own row, its UID comes from its own identity key, and a second run matches both by
+key (`test_both_shows_survive_a_second_run_unchanged`). Both `except` blocks in `app/jobs.py` call
+`session.rollback()` first: a failing source loses only its own batch, its error is recorded, the
+run goes on.
+
+*Mutants* (each alone, then reverted; all killed): M1 no `rollback()` → the two failing-source tests
+fail; M2 no batch lookup → the three duplicate tests fail; M3 distinct keys merged → the late show is
+lost, two tests fail.
+
+*Left as it was:* a late show that first appears in a **later** run, when the early show's row is
+already stored, still matches the early row by dedup hash (the cross-source merge path) and is folded
+into it. Telling those apart needs the stored row's source and key compared on that path; the same
+question as item 15's hash-fallback match. A plugin-side guard that keeps only the first event per
+hash (a workaround some deployments added for this item) can be dropped.
 
 ### 19 — `ical` and `spothopper` sources all fail on `SOURCE_NAME` — DONE
 
