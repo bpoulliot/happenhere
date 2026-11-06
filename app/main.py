@@ -14,6 +14,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 
 from . import auth as _auth
+from . import logredact as _logredact
 from . import oidc as _oidc
 from .config import load_config, save_auth
 from .db import init_db
@@ -91,13 +92,25 @@ class _SecurityHeaders(BaseHTTPMiddleware):
         return response
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    cfg = load_config()
+def configure_logging(cfg) -> None:
+    """The app's logging: level from config, secrets redacted, no per-request httpx lines.
+
+    httpx logs every request URL at INFO, and some APIs carry their key in the query string
+    (item 21); ``logredact.install`` covers every record, these levels keep the noise out.
+    """
+    _logredact.install()
     logging.basicConfig(
         level=getattr(logging, cfg.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s — %(message)s",
     )
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    cfg = load_config()
+    configure_logging(cfg)
     _oidc.validate_auth_config(cfg)
     _auth.bootstrap(
         cfg,
