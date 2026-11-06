@@ -58,11 +58,17 @@ def upsert_events(session: Session, events: list[EventData], source_id: int) -> 
     (title + date + venue), which also merges the same event from two sources. Two events in
     one batch with the same identity key (a series sharing one URL, two shows in one slot)
     have no usable identity: both fall back to the dedup hash alone.
+
+    Two events in one batch with the same dedup hash (an early and a late show of one title,
+    item 18) are one event when their identity keys agree or are absent, and two when the keys
+    differ: the second is stored under ``timed_hash`` (the hash plus the start time). The batch
+    is tracked here because the session does not autoflush, so a query cannot see it.
     """
     source = session.get(Source, source_id)
     keys = [identity_key(ev, source) for ev in events]
     shared = {k for k, n in Counter(keys).items() if n > 1}
     taken_hashes: set[str] = set()  # this batch's, which a query before commit cannot see
+    batch: dict[str, tuple[Event, str | None]] = {}  # dedup hash -> (row, its key) this batch
 
     new_count = 0
     updated_count = 0
@@ -83,8 +89,21 @@ def upsert_events(session: Session, events: list[EventData], source_id: int) -> 
                     row.uid = legacy_uid(row.dedup_hash)  # its feed UID must not move with it
                 row.dedup_hash = h
             taken_hashes.add(row.dedup_hash)
+            batch[row.dedup_hash] = (row, key)
             updated_count += 1
             continue
+
+        if h in batch:
+            first, first_key = batch[h]
+            if key is None or key == first_key:
+                _refresh(first, ev)  # the same event listed twice
+                updated_count += 1
+                continue
+            h = timed_hash(ev)  # a different event with the same title, day and venue
+            if h in batch:
+                _refresh(batch[h][0], ev)
+                updated_count += 1
+                continue
 
         row = session.query(Event).filter_by(dedup_hash=h).first()
         if row is None:
@@ -115,8 +134,15 @@ def upsert_events(session: Session, events: list[EventData], source_id: int) -> 
                 row.identity_key = key  # a row from before item 03, or from another source
             updated_count += 1
         taken_hashes.add(h)
+        batch[h] = (row, key)
     session.commit()
     return new_count, updated_count
+
+
+def timed_hash(ev: EventData) -> str:
+    """The dedup hash with the start time in it: a second show of one title on one day."""
+    key = f"{_norm(ev.title)}|{ev.start_dt.isoformat()}|{_norm(ev.venue_name)}"
+    return hashlib.sha256(key.encode()).hexdigest()
 
 
 def legacy_uid(dedup_hash: str) -> str:

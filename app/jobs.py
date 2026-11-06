@@ -39,6 +39,9 @@ def run_all_scrapers() -> None:
                 session.commit()
                 log.info("%s: %d new, %d updated", src.name, new, updated)
             except Exception as exc:
+                # A failed flush leaves the session unusable until rolled back (item 18): without
+                # this the commit below raised and ended the whole run.
+                session.rollback()
                 src.error_count = (src.error_count or 0) + 1
                 src.last_error = str(exc)
                 session.commit()
@@ -74,6 +77,7 @@ def run_single_scraper(source_name: str) -> dict:
             session.commit()
             return {"new": new, "updated": updated, "total": len(events)}
         except Exception as exc:
+            session.rollback()
             src.error_count = (src.error_count or 0) + 1
             src.last_error = str(exc)
             session.commit()
