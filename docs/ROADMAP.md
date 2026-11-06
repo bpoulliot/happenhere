@@ -47,15 +47,9 @@ item that is not READY.
 | 16 | 1 | Eventbrite: the regional scraper is against the site's terms; an API token or the partner program instead | **NEEDS DECISION** |
 | 17 | 0 | Hard-coded `America/Denver`: parsed times and the ICS feed ignore the configured timezone | **READY** |
 | 18 | 0 | Two same-title shows on one day in one batch abort the whole scrape run (UNIQUE, no rollback) | **READY** |
-<<<<<<< HEAD
-| 19 | 0 | Every `ical` and `spothopper` source fails: the generic scrapers have no `SOURCE_NAME` | **READY** |
-| 20 | 0 | Orphaned Chromium processes are never reaped while uvicorn is PID 1 | **DONE** |
-| 21 | 0 | Secrets in logs: request lines and error text carry API keys from query strings | **READY** |
-=======
 | 19 | 0 | Every `ical` and `spothopper` source fails: the generic scrapers have no `SOURCE_NAME` | **DONE** |
-| 20 | 0 | Orphaned Chromium processes are never reaped while uvicorn is PID 1 | **READY** |
+| 20 | 0 | Orphaned Chromium processes are never reaped while uvicorn is PID 1 | **DONE** |
 | 21 | 0 | Secrets in logs: request lines and error text carry API keys from query strings | **DONE** |
->>>>>>> origin/main
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -618,9 +612,6 @@ URL-driven scrapers set it to the source's display name, else its URL, so their 
 source spoke. **Tests (fail first):** a synthetic iCal feed and a synthetic SpotHopper page (mocked
 transport) each return their future event through the generic scraper.
 
-<<<<<<< HEAD
-### 20 — Orphaned Chromium never reaped while uvicorn is PID 1 — DONE
-=======
 **Findings (item 19 session).** Failing first, `tests/test_generic_scrapers.py` on `main` before this
 change: both generic scrapers raised exactly the deployment's error (`'GenericICalScraper' object has
 no attribute 'SOURCE_NAME'`, the same for `GenericSpotHopperScraper`), and the class check found
@@ -629,8 +620,7 @@ defaults to `""`, and all five generic URL-driven scrapers set it to the display
 3 tests, all failing before, passing after. A deployment that disabled its `ical`/`spothopper`
 sources over this error can re-enable them.
 
-### 20 — Orphaned Chromium never reaped while uvicorn is PID 1 — READY
->>>>>>> origin/main
+### 20 — Orphaned Chromium never reaped while uvicorn is PID 1 — DONE
 
 **Found in a deployment (2026-11-06).** The image starts uvicorn as the container's PID 1, and
 uvicorn does not reap children it did not start. Chromium's helper processes that outlive their
@@ -641,7 +631,6 @@ browser the app opens; this is the processes Chromium itself leaves. **Spec:** r
 `CMD` and in `CLAUDE.md`'s deployment notes (`docker run --init` for a plain run). **Test (fails
 first):** the example compose file sets `init: true` for the service.
 
-<<<<<<< HEAD
 **Findings (item 20 session).** `tests/test_deploy_example.py` fails on `main` before this change
 (the example compose had no `init`) and passes after. As built: `init: true` in the example
 `docker-compose.yml`, the requirement next to the `Dockerfile`'s `CMD` and under "Deployment" in
@@ -650,10 +639,7 @@ first):** the example compose file sets `init: true` for the service.
 itself still starts uvicorn directly: a deployment that drops `init` gets the zombies back, which is
 why the requirement is written in three places rather than only in compose.
 
-### 21 — Secrets in logs: API keys in request lines and error text — READY
-=======
 ### 21 — Secrets in logs: API keys in request lines and error text — DONE
->>>>>>> origin/main
 
 **Found in a deployment (2026-11-06).** `httpx` logs every request at `INFO` as `HTTP Request: GET
 <full URL>`, and the Ticketmaster Discovery API takes its key in the query string (`?apikey=...`),
