@@ -22,6 +22,7 @@ from pathlib import Path
 import yaml
 from sqlalchemy.orm import Session
 
+from . import logredact
 from .models import Source
 from .netguard import NonPublicURL, require_public_url
 from .scrapers.registry import scraper_types
@@ -343,5 +344,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    logredact.install()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     sys.exit(main())

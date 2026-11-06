@@ -9,6 +9,7 @@ from datetime import datetime
 from .config import get_config
 from .db import get_session
 from .dedup import upsert_events
+from .logredact import redact
 from .models import Event, Source
 from .scrapers.registry import get_scraper
 
@@ -43,7 +44,7 @@ def run_all_scrapers() -> None:
                 # this the commit below raised and ended the whole run.
                 session.rollback()
                 src.error_count = (src.error_count or 0) + 1
-                src.last_error = str(exc)
+                src.last_error = redact(str(exc))
                 session.commit()
                 log.exception("Scraper %s failed: %s", src.name, exc)
             finally:
@@ -79,10 +80,10 @@ def run_single_scraper(source_name: str) -> dict:
         except Exception as exc:
             session.rollback()
             src.error_count = (src.error_count or 0) + 1
-            src.last_error = str(exc)
+            src.last_error = redact(str(exc))
             session.commit()
             log.exception("Scraper %s failed", source_name)
-            return {"error": str(exc)}
+            return {"error": redact(str(exc))}
         finally:
             scraper.close()
 
