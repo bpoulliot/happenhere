@@ -45,7 +45,9 @@ class EventData:
 
 
 class BaseScraper(abc.ABC):
-    SOURCE_NAME: str
+    # Names the source in log lines. A generic URL-driven scraper sets it per instance
+    # (item 19: the bases log it, and a missing one failed every ical/spothopper source).
+    SOURCE_NAME: str = ""
     SOURCE_TYPE: str
 
     def __init__(self, config):
