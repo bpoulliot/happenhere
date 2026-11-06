@@ -47,7 +47,7 @@ item that is not READY.
 | 16 | 1 | Eventbrite: the regional scraper is against the site's terms; an API token or the partner program instead | **NEEDS DECISION** |
 | 17 | 0 | Hard-coded `America/Denver`: parsed times and the ICS feed ignore the configured timezone | **READY** |
 | 18 | 0 | Two same-title shows on one day in one batch abort the whole scrape run (UNIQUE, no rollback) | **READY** |
-| 19 | 0 | Every `ical` and `spothopper` source fails: the generic scrapers have no `SOURCE_NAME` | **READY** |
+| 19 | 0 | Every `ical` and `spothopper` source fails: the generic scrapers have no `SOURCE_NAME` | **DONE** |
 | 20 | 0 | Orphaned Chromium processes are never reaped while uvicorn is PID 1 | **READY** |
 | 21 | 0 | Secrets in logs: request lines and error text carry API keys from query strings | **READY** |
 
@@ -600,7 +600,7 @@ source is skipped, and the run reports nothing. Measured: a scheduled-style run 
 second source: both shows and the second source's event are stored, and the run completes. A source
 whose `upsert_events` raises mid-batch is recorded with its error, the next source still scrapes.
 
-### 19 — `ical` and `spothopper` sources all fail on `SOURCE_NAME` — READY
+### 19 — `ical` and `spothopper` sources all fail on `SOURCE_NAME` — DONE
 
 **Found in a deployment (2026-11-04).** Every source of type `ical` or `spothopper` fails with
 `'GenericICalScraper' / 'GenericSpotHopperScraper' object has no attribute 'SOURCE_NAME'`: the bases
@@ -611,6 +611,14 @@ annotates it, and the generic subclasses never set it. The log call's arguments 
 URL-driven scrapers set it to the source's display name, else its URL, so their log lines say which
 source spoke. **Tests (fail first):** a synthetic iCal feed and a synthetic SpotHopper page (mocked
 transport) each return their future event through the generic scraper.
+
+**Findings (item 19 session).** Failing first, `tests/test_generic_scrapers.py` on `main` before this
+change: both generic scrapers raised exactly the deployment's error (`'GenericICalScraper' object has
+no attribute 'SOURCE_NAME'`, the same for `GenericSpotHopperScraper`), and the class check found
+`jsonld` without one too (it never logged it, so it did not fail). As built: `BaseScraper.SOURCE_NAME`
+defaults to `""`, and all five generic URL-driven scrapers set it to the display name, else the URL.
+3 tests, all failing before, passing after. A deployment that disabled its `ical`/`spothopper`
+sources over this error can re-enable them.
 
 ### 20 — Orphaned Chromium never reaped while uvicorn is PID 1 — READY
 

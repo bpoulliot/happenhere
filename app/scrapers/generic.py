@@ -42,6 +42,7 @@ class GenericJsonLdScraper(BaseScraper):
 
     def __init__(self, config, source_url: str = "", venue_name: str = ""):
         super().__init__(config)
+        self.SOURCE_NAME = venue_name or source_url
         self.source_url = source_url
         self.venue_name = venue_name
 
@@ -75,6 +76,7 @@ class GenericICalScraper(ICalScraper):
 
     def __init__(self, config, source_url: str = "", venue_name: str = ""):
         super().__init__(config)
+        self.SOURCE_NAME = venue_name or source_url
         self.ICAL_URL = source_url
         self.VENUE_NAME = venue_name
 
@@ -91,6 +93,7 @@ class GenericSpotHopperScraper(SpotHopperScraper):
 
     def __init__(self, config, source_url: str = "", venue_name: str = ""):
         super().__init__(config)
+        self.SOURCE_NAME = venue_name or source_url
         self.EVENTS_URL = source_url
         self.VENUE_NAME = venue_name
 
@@ -110,6 +113,7 @@ class GenericSquarespaceScraper(BaseScraper):
 
     def __init__(self, config, source_url: str = "", venue_name: str = ""):
         super().__init__(config)
+        self.SOURCE_NAME = venue_name or source_url
         self.source_url = source_url
         self.venue_name = venue_name
 
@@ -186,6 +190,7 @@ class GenericPlaywrightJsonLdScraper(PlaywrightScraper):
 
     def __init__(self, config, source_url: str = "", venue_name: str = ""):
         super().__init__(config)
+        self.SOURCE_NAME = venue_name or source_url
         self.source_url = source_url
         self.venue_name = venue_name
 
