@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime
 
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+
+from .tz import tz_of
 
 log = logging.getLogger(__name__)
 
@@ -16,10 +17,14 @@ _SCRAPE_JOB = "scrape_all"
 _DIGEST_PREFIX = "digest@"
 
 
+def _timezone():
+    """The configured zone (``TZ`` in the environment lands in ``Config.tz``)."""
+    return tz_of()
+
+
 def start(scrape_fn, scrape_interval_hours: int) -> None:
     global _scheduler
-    tz = os.environ.get("TZ", "America/Denver") or "America/Denver"
-    _scheduler = BackgroundScheduler(timezone=tz)
+    _scheduler = BackgroundScheduler(timezone=_timezone())
 
     _scheduler.add_job(
         scrape_fn,

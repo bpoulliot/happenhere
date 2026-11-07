@@ -29,6 +29,7 @@ from . import ntfy
 from .config import Config, get_config
 from .db import get_meta, get_session, set_meta
 from .models import Event, NotificationLog, shown_events
+from .tz import tz_of
 
 log = logging.getLogger(__name__)
 
@@ -59,14 +60,6 @@ def fingerprint(ev: Event) -> str:
 # ---------------------------------------------------------------------------
 # Time
 # ---------------------------------------------------------------------------
-
-
-def tz_of(cfg: Config) -> ZoneInfo:
-    try:
-        return ZoneInfo(cfg.tz or "UTC")
-    except Exception:
-        log.warning("Unknown timezone %r — using UTC", cfg.tz)
-        return ZoneInfo("UTC")
 
 
 def local_now(cfg: Config) -> datetime:

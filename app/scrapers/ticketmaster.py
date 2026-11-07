@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from zoneinfo import ZoneInfo
 
 import httpx
 
+from ..tz import tz_of
 from .base import DEFAULT_HEADERS, BaseScraper, EventData
 
 log = logging.getLogger(__name__)
@@ -25,9 +25,7 @@ class TicketmasterScraper(BaseScraper):
 
         events: list[EventData] = []
         page = 0
-        now_iso = (
-            datetime.now(ZoneInfo("America/Denver")).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        )
+        now_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         with httpx.Client(headers=DEFAULT_HEADERS, timeout=30) as client:
             while True:
@@ -76,7 +74,7 @@ def _parse_event(ev: dict) -> EventData | None:
     if dt_str:
         start_dt = (
             datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-            .astimezone(ZoneInfo("America/Denver"))
+            .astimezone(tz_of())
             .replace(tzinfo=None)
         )
     elif start.get("localDate"):

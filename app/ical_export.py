@@ -1,21 +1,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
-from icalendar import (
-    Calendar,
-    Event,
-    Timezone,
-    TimezoneDaylight,
-    TimezoneStandard,
-)
+from icalendar import Calendar, Event, Timezone
 from sqlalchemy.orm import Session
 
 from .dedup import legacy_uid
 from .models import Event as EventRow
 from .models import shown_events
+from .tz import tz_of
 
-_TZ_NAME = "America/Denver"
 PRODID = "-//happenhere//happenhere//EN"
 
 
@@ -57,10 +52,11 @@ def generate_ics(
     cal.add("calscale", "GREGORIAN")
     cal.add("method", "PUBLISH")
     cal.add("x-wr-calname", name)
-    cal.add("x-wr-timezone", _TZ_NAME)
+    tz = tz_of()
+    cal.add("x-wr-timezone", tz.key)
     cal.add("x-wr-caldesc", description or f"Local events from {name}")
 
-    _add_vtimezone(cal)
+    _add_vtimezone(cal, tz)
 
     rows = feed_rows(session, source_ids=source_ids, lookahead_days=lookahead_days, now=now)
 
@@ -69,15 +65,15 @@ def generate_ics(
         vevent.add("uid", feed_uid(row))
         vevent.add("summary", row.title)
 
-        # Treat stored datetimes as Mountain Time (they were stored naive, in local time)
-        dtstart = _naive_to_mountain(row.start_dt)
+        # Stored datetimes are naive local times: label them with the configured zone
+        dtstart = _naive_to_local(row.start_dt, tz)
         vevent.add("dtstart", dtstart)
 
         if row.end_dt:
-            vevent.add("dtend", _naive_to_mountain(row.end_dt))
+            vevent.add("dtend", _naive_to_local(row.end_dt, tz))
         else:
             # Default 2-hour duration
-            vevent.add("dtend", _naive_to_mountain(row.start_dt + timedelta(hours=2)))
+            vevent.add("dtend", _naive_to_local(row.start_dt + timedelta(hours=2), tz))
 
         if row.venue_name:
             loc_parts = [row.venue_name]
@@ -101,34 +97,11 @@ def generate_ics(
     return cal.to_ical()
 
 
-def _naive_to_mountain(dt: datetime) -> datetime:
-    """Attach Mountain Standard Time offset (UTC-7 MDT / UTC-7 MST approximation).
-    For a home calendar app this is good enough; production would use pytz/zoneinfo.
-    """
-    from zoneinfo import ZoneInfo
-
-    mtn = ZoneInfo(_TZ_NAME)
-    return dt.replace(tzinfo=mtn)
+def _naive_to_local(dt: datetime, tz: ZoneInfo) -> datetime:
+    """Attach the configured zone to a stored naive local time (the wall clock is unchanged)."""
+    return dt.replace(tzinfo=tz)
 
 
-def _add_vtimezone(cal: Calendar) -> None:
-    tz = Timezone()
-    tz.add("tzid", _TZ_NAME)
-
-    std = TimezoneStandard()
-    std.add("tzoffsetfrom", timedelta(hours=-6))
-    std.add("tzoffsetto", timedelta(hours=-7))
-    std.add("tzname", "MST")
-    std.add("dtstart", datetime(1970, 11, 1, 2, 0, 0))
-    std.add("rrule", {"FREQ": "YEARLY", "BYDAY": "1SU", "BYMONTH": 11})
-    tz.add_component(std)
-
-    dst = TimezoneDaylight()
-    dst.add("tzoffsetfrom", timedelta(hours=-7))
-    dst.add("tzoffsetto", timedelta(hours=-6))
-    dst.add("tzname", "MDT")
-    dst.add("dtstart", datetime(1970, 3, 8, 2, 0, 0))
-    dst.add("rrule", {"FREQ": "YEARLY", "BYDAY": "2SU", "BYMONTH": 3})
-    tz.add_component(dst)
-
-    cal.add_component(tz)
+def _add_vtimezone(cal: Calendar, tz: ZoneInfo) -> None:
+    """The zone's rules, generated from the tz database, so TZID and VTIMEZONE always agree."""
+    cal.add_component(Timezone.from_tzinfo(tz, tzid=tz.key))

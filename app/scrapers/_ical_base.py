@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 import httpx
 from icalendar import Calendar
 
+from ..tz import tz_of
 from .base import DEFAULT_HEADERS, BaseScraper, EventData
 
 log = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ def _parse_vevent(component, default_venue: str) -> EventData | None:
     if hasattr(start, "hour"):
         # datetime
         if start.tzinfo is not None:
-            start = start.astimezone(ZoneInfo("America/Denver")).replace(tzinfo=None)
+            start = start.astimezone(tz_of()).replace(tzinfo=None)
     else:
         # date only → midnight
         start = datetime(start.year, start.month, start.day, 0, 0, 0)
@@ -70,7 +70,7 @@ def _parse_vevent(component, default_venue: str) -> EventData | None:
         e = dtend.dt
         if hasattr(e, "hour"):
             if e.tzinfo is not None:
-                e = e.astimezone(ZoneInfo("America/Denver")).replace(tzinfo=None)
+                e = e.astimezone(tz_of()).replace(tzinfo=None)
             end = e
         else:
             end = datetime(e.year, e.month, e.day, 23, 59, 0)
