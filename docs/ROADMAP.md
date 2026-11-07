@@ -40,7 +40,7 @@ item that is not READY.
 | 09 | 0 | Dependency bumps, low risk: CI actions and patch-level libraries (Dependabot) | **DONE** |
 | 10 | 0 | Web-framework bump: FastAPI and uvicorn (Starlette moves with them) | **DONE** |
 | 11 | 3 | Facebook and Instagram as event sources; reading event flyers with a vision model | **NEEDS DECISION** |
-| 12 | 1 | Ticketing platforms as source options: Ticketmaster-by-venue type, wider JSON-LD, platform recognition | **READY** |
+| 12 | 1 | Ticketing platforms as source options: Ticketmaster-by-venue type, wider JSON-LD, platform recognition | DONE |
 | 13 | 1 | Local scraper plugins: extra source types loaded from a directory outside the repo | **DONE** |
 | 14 | 1 | Configurable notification digest that never repeats an unchanged list | **DONE** |
 | 15 | 0 | A re-scraped event keeps its first start time: a changed time never reaches the feed or the digest | **DONE** |
@@ -412,7 +412,7 @@ endpoint and model from config and never assumes one host.
 
    (b) is worth building only if the admin will actually paste flyers. It adds no unattended source.
 
-### 12 — Ticketing platforms as built-in source options — READY
+### 12 — Ticketing platforms as built-in source options — DONE
 
 Make the common ticketing platforms first-class source types, offered in the admin "add source"
 form and recognised by auto-detection from a pasted URL: **Eventbrite** (today only a regional
@@ -448,6 +448,33 @@ generic JSON-LD reader, which this item fixes:
 4. No types for the five not-buildable platforms.
 
 **Time zones:** a Ticketmaster `dateTime` (UTC) is converted with `app.tz.tz_of()` (item 17), never a fixed zone.
+
+**Done (PR #34).**
+1. `extract_jsonld_events` (`app/scrapers/_html_base.py`) reads `Event`, every `…Event` subtype and
+   `Festival`, with `@type` a string or a list (`is_event_type`). It also reads events nested under
+   `event`, `events` and `Events` (`NESTED_EVENT_KEYS`), each a list or a single object, under any
+   top-level, list or `@graph` item. Only Event types are kept. An event that appears both top level
+   and nested is read once. Two items are one event when they have the same `url` and the same
+   `startDate`, or, with no `url`, the same `(name, startDate)`. The spec said "by `url`". The start
+   is added because two events can share a series page's `url`.
+2. `ticketmaster_venue` (`app/scrapers/ticketmaster_venue.py`, label "Ticketmaster venue"):
+   * the admin form offers it with a URL hint;
+   * a venue page is resolved on detect and on save, never on a scrape. With no match the admin
+     gets a 400 or a detection note saying to paste the Discovery id;
+   * with `noSpecificTime`, the start is `localDate` alone;
+   * the identity is `ticketmaster:<event id>`.
+   The regional `ticketmaster` type and the shared `_parse_event` are unchanged, and keep the bare id.
+3. Paging is `app.scrapers.ticketmaster.page_discovery_events(client, key, params)`, for item 22 to
+   reuse. It stops at the last page, at an empty page, or when `size * page` would reach 1,000.
+4. Recognition is `platform_note` in `app/discovery.py`. It checks the host before any request and
+   covers `dice.fm`, `bandsintown.com`, `axs.com`, `seetickets.com`, `seetickets.us`, `eventim.us`,
+   `etix.com`, and Eventbrite's country sites.
+5. Tests: `tests/test_jsonld_nested.py` (29), `tests/test_ticketmaster_venue.py` (33) and
+   `tests/test_platform_recognition.py` (20), on synthetic fixtures with a mocked transport. A test
+   asserts that no key is left in the log at `DEBUG`.
+   * Failing first: 22 of 29 JSON-LD tests failed, and the other two modules failed at import.
+   * Mutants: dropping nested events fails 17 tests, and skipping `Events` fails 7. A pager without
+     the 1,000 cap fails `test_pager_stops_at_1000_items`.
 
 ### 13 — Local scraper plugins — DONE
 
@@ -870,7 +897,7 @@ This is item 12's gap G2 (`Place.event`) with one more key spelling. **Spec:** w
 `Place` (or a subtype), take the events under `event`, `events` and `Events` (a list or a single
 object), each kept only if it is an Event type (item 12's G1 subtypes included), de-duplicated
 with top-level events; whichever of items 12 and 23 runs first does both spellings, and the other
-records that. **Tests:** synthetic fixtures for each key spelling, a single object and a list;
+records that. **Covered by item 12, PR #34; 23 verifies and closes.** **Tests:** synthetic fixtures for each key spelling, a single object and a list;
 detection reports the type `jsonld` and the count; a page with the same event both top-level and
 nested yields it once.
 
