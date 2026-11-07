@@ -50,7 +50,7 @@ item that is not READY.
 | 19 | 0 | Every `ical` and `spothopper` source fails: the generic scrapers have no `SOURCE_NAME` | **DONE** |
 | 20 | 0 | Orphaned Chromium processes are never reaped while uvicorn is PID 1 | **DONE** |
 | 21 | 0 | Secrets in logs: request lines and error text carry API keys from query strings | **DONE** |
-| 22 | 1 | Ticketmaster regional search: `postalCode` ignores the radius; a real area search passes the 1,000-result cap | **READY** |
+| 22 | 1 | Ticketmaster regional search: `postalCode` ignores the radius; a real area search passes the 1,000-result cap | **DONE** |
 | 23 | 1 | JSON-LD: events listed under a `Place`'s capitalised `Events` key are missed by detection and the scraper | **READY** |
 | 24 | 1 | Import: a disabled entry whose URL fails the network guard is stored disabled, not a refused file | **DONE** |
 | 25 | 0 | A same-title show first seen in a later run gets its own row; rows a source stops listing retire | **DONE** |
@@ -901,7 +901,7 @@ CLI call it. `run_all_scrapers`/`run_single_scraper` store `redact(str(exc))` in
 header; httpx does not log headers). A deployment upgrading from before this item still has old log
 lines and old `last_error` values with the key until the log rotates and the source scrapes again.
 
-### 22 — Ticketmaster regional search ignores the radius — READY
+### 22 — Ticketmaster regional search ignores the radius — DONE
 
 **Found in a deployment (2026-11-04).** The built-in `ticketmaster` type sends `postalCode` +
 `radius` to the Discovery API. Measured: with `postalCode` the API returns only events at venues
@@ -937,6 +937,64 @@ covering two cities needs two searches, which one ZIP setting cannot express.
 **Tests:** saved-fixture pages through a mocked transport; the window split covers the range
 exactly once with no gap or overlap; a window over the cap is halved; a second source with
 another location does not change the first; a source without `latlong` is refused.
+
+**Built (2026-11-06).** `app/scrapers/ticketmaster.py`:
+* **Location.** `regional_location(url)` takes `latlong` (two numbers in range), `radius` (> 0)
+  and `unit` (`miles` or `km`, default `miles`) from an `https://app.ticketmaster.com/discovery/v2/events`
+  URL, and nothing else from it; a URL carrying `apikey` has no location. `location_problem(url)` is
+  one fixed text naming the URL form and the fields. `postalCode` is never sent;
+  `city_zip`/`city_radius_miles` are read by nothing now but the settings form (kept there).
+* **Windows.** `split_windows(start, end, 30 days)` tiles `[now, now + feed_lookahead_days)`, each
+  window's end the next one's start. A window whose first page reports `page.totalElements` over
+  1,000 is `halve`d at a whole second and both halves re-run in order (`page_discovery_events` gained
+  `on_total`, called after the first page). Events are de-duplicated by id across windows (an event
+  on a boundary is read twice and kept once). A window of one day or less over the cap keeps its
+  first 1,000.
+* **Pacing.** At most one request per `MIN_REQUEST_INTERVAL` (1 s); at most `MAX_REQUESTS_PER_SCRAPE`
+  (100) requests per scrape.
+* **Never silent.** The one-day cap and the ceiling each log a warning and set the scraper's
+  `warnings` and `incomplete`; `app.jobs._store` stores the warnings as the source's `last_error`
+  (with `error_count` 0, so the canary does not count it as failing; the admin list shows
+  "⚠ warning") and an incomplete scrape retires nothing (item 25 would otherwise retire every
+  event it did not reach). A complete scrape clears the warning.
+* **Save and import.** `app.sources.location_refusal(type, url)` is the rule; an **enabled**
+  regional source without a location is refused by the import (through `failed_check`), the
+  create and edit forms and the toggle, with that fixed text. A **disabled** one is stored with
+  `last_error` `location missing: ...` (a `CHECK_ERROR_MARKS` mark, so a later import or save
+  that passes clears it) and the import plan warns. The seeded `ticketmaster` row carries that
+  same `last_error`, so a fresh database exports and re-imports unchanged.
+* **Admin form.** The regional type's hint shows the URL form, and its URL field is no longer
+  disabled. Event times go through `tz_of(cfg)` (item 17).
+
+**Tests** (`tests/test_ticketmaster_regional.py`, 37; a fake Discovery API that filters by
+`startDateTime`/`endDateTime` inclusively, pages and refuses a page at the cap): the location
+parser and 11 URLs without a usable location; the scraper sends the URL's location and never the
+ZIP; an enabled source without one refuses before any request; a second location leaves the
+first's events unchanged; the split covers 1 to 366 days exactly once; halving covers its window;
+a boundary event kept once; the requested windows tile the look-ahead; 2,500 events in one month
+read in full through halving; 2,500 in ten minutes keep 1,000 per capped window with a warning;
+requests at least 1 s apart; the ceiling stops the scrape and says so; a ceiling-hit run stores
+the warning, keeps `error_count` 0 and retires nothing, and the next full run clears it; no
+`apikey=` in captured logs with `httpx` at DEBUG; import refuses an enabled entry and stores a
+disabled one with a warning; the form refuses, stores disabled, the toggle refuses, an edit with
+a location enables and clears; the form renders the URL hint. Suite: 389 passed on `main`, 426
+with this change. Two existing tests changed: item 21's redaction fixture gives its source a
+location (otherwise it fails before the request it stages), and item 24's round-trip test now
+expects the seeded placeholder's warning too.
+
+**Failing first:** 25 failed, 11 errors, 1 passed (the enabled-with-location import, which the
+old code also accepted).
+
+**Mutants** (each run against the new test file, then restored):
+| Mutant | Killed by |
+|---|---|
+| the split starts the next window one second after the last one ended | `test_the_window_split_covers_the_range_exactly_once[31]` |
+| halving drops the instant at the midpoint | `test_halving_covers_the_window_exactly_once` |
+| a window over the cap is read as it is, never halved | `test_a_window_over_the_cap_is_halved_and_nothing_is_lost` |
+| an incomplete scrape still retires | `test_a_capped_scrape_records_the_warning_and_retires_nothing` |
+
+**Not determined here:** how many windows and requests a real area needs; the deployment's one
+live probe goes with its own records, not here.
 
 ### 23 — JSON-LD events under a `Place`'s `Events` key — DONE
 
@@ -1111,7 +1169,7 @@ event retires it until it is listed again):
 
 | Type | Can it truncate? | Why |
 |---|---|---|
-| `ticketmaster` | yes | Pages of 200 by date; the API stops at 1,000 results (item 22 measured a metro search losing its tail), so the furthest-out events drop once the near term fills. |
+| `ticketmaster` | since item 22, only when it says so | Item 22 reads the look-ahead in date windows under the 1,000 cap. A one-day window still over the cap, or the request ceiling, makes the scrape `incomplete`: it records a warning and retires nothing. |
 | `eventbrite` | yes | Four fixed scrolls of a lazy-loading page; it also keeps one event per title (first 40 characters) and day, so a second show that day is never returned. |
 | `meetup` | yes | Three fixed scrolls of a lazy-loading search page. |
 | `ical` | yes, by site | One GET, no paging. A WordPress events-calendar export can carry only the events of the list page it was exported from (that plugin's export follows the current view; not checked against a live feed here); a full calendar feed is complete. |
@@ -1132,7 +1190,7 @@ dedup-hash match is the same `slot` event with a moved time (updated in place, s
 **Found by item 25.** Item 25 retires a source's upcoming rows that a successful scrape (at least
 one event) did not return. Every built-in type except `fathom` can return less than the source's
 whole list (item 25's table): fixed scroll counts (`eventbrite`, `meetup`), a 1,000-result paging
-cap (`ticketmaster`, item 22), one page with no paging (`ical` exports of a list view, `jsonld`,
+cap (`ticketmaster`; item 22 has since read past it and makes a capped scrape retire nothing), one page with no paging (`ical` exports of a list view, `jsonld`,
 `squarespace`, `spothopper`, `playwright_jsonld`), and per-title-per-day de-duplication inside
 `eventbrite` and `spothopper` that drops a second show. Such a row leaves the feeds until a later
 scrape lists it again; in a calendar app it disappears and comes back.
