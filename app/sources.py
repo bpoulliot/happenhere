@@ -7,6 +7,10 @@ Sources are keyed by ``name``. An import is a dry run unless ``--apply`` is give
 every entry before it writes anything (one bad entry refuses the whole file) and writes in one
 transaction. It never deletes: a source absent from the file is reported, and disabled only
 with ``--disable-missing``. Every URL passes ``netguard``, as it does in the admin form.
+
+A *disabled* entry whose URL the guard refuses is not a refused file (item 24): it is stored
+disabled, the refusal in its ``last_error``, and the plan shows a warning. Enabling it, in the
+admin or by a later import, runs the guard again and is refused while it still fails.
 """
 
 from __future__ import annotations
@@ -36,6 +40,32 @@ _FIELDS = {"name", "display_name", "type", "url", "categories", "tags", "enabled
 
 class ImportRefused(ValueError):
     """The file is not importable; the message names every bad entry."""
+
+
+# A ``last_error`` written by a failed import/admin check (not by a scraper) starts with one of
+# these marks, so a later pass can tell its own record from a scraper's and clear only its own.
+GUARD_REFUSAL_MARK = "url refused: "
+CHECK_ERROR_MARKS: tuple[str, ...] = (GUARD_REFUSAL_MARK,)
+
+
+def is_check_error(last_error: str | None) -> bool:
+    return bool(last_error) and last_error.startswith(CHECK_ERROR_MARKS)
+
+
+def failed_check(
+    enabled: bool, label: str, errors: list[str], message: str, last_error: str
+) -> str | None:
+    """The one place a failed per-entry check is judged (item 24; item 22 reuses it).
+
+    An **enabled** entry that fails refuses the file: ``message`` joins ``errors`` and None comes
+    back. A **disabled** entry is not refused: the ``last_error`` to store for it comes back, and
+    the plan shows it as a warning. ``last_error`` must start with a mark in ``CHECK_ERROR_MARKS``
+    so that a later import, once the check passes, clears it and only it.
+    """
+    if enabled:
+        errors.append(f"{label}: {message}")
+        return None
+    return last_error
 
 
 # --- Rules shared with the admin source form (app/web/routes.py) ------------------------
@@ -102,6 +132,12 @@ def _validate_entry(raw: object, label: str) -> tuple[dict | None, list[str]]:
         errors.append(f"{label}: display_name must be a string")
         display = ""
 
+    enabled = raw.get("enabled", True)
+    if not isinstance(enabled, bool):
+        errors.append(f"{label}: enabled must be true or false")
+        enabled = True
+
+    refusal: str | None = None
     url = raw.get("url", "")
     url = "" if url is None else url
     if not isinstance(url, str):
@@ -112,8 +148,12 @@ def _validate_entry(raw: object, label: str) -> tuple[dict | None, list[str]]:
         try:
             check_source_url(url)
         except NonPublicURL as exc:
-            errors.append(
-                f"{label}: url refused: {exc} (must be http(s) and non-public hosts are refused)"
+            refusal = failed_check(
+                enabled,
+                label,
+                errors,
+                f"url refused: {exc} (must be http(s) and non-public hosts are refused)",
+                f"{GUARD_REFUSAL_MARK}{exc}",
             )
 
     cats = raw.get("categories", [])
@@ -131,11 +171,6 @@ def _validate_entry(raw: object, label: str) -> tuple[dict | None, list[str]]:
             errors.append(f"{label}: tags must be a list of slugs ([a-z0-9-])")
             tags = None
 
-    enabled = raw.get("enabled", True)
-    if not isinstance(enabled, bool):
-        errors.append(f"{label}: enabled must be true or false")
-        enabled = True
-
     if errors:
         return None, errors
     entry = {
@@ -148,6 +183,8 @@ def _validate_entry(raw: object, label: str) -> tuple[dict | None, list[str]]:
     }
     if tags is not None:
         entry["tags"] = list(tags)
+    if refusal:
+        entry["refusal"] = refusal  # not a column: build_plan turns it into last_error + a warning
     return entry, []
 
 
@@ -201,13 +238,15 @@ class Plan:
     )  # missing, still enabled, --disable-missing
     disabled: list[str] = field(default_factory=list)  # ... and actually disabled (--apply)
     changes: dict[str, list[str]] = field(default_factory=dict)
+    warnings: dict[str, str] = field(default_factory=dict)  # stored anyway, name -> reason
     applied: bool = False
 
     def summary(self) -> str:
-        return (
+        out = (
             f"{len(self.added)} added, {len(self.updated)} updated, "
             f"{len(self.unchanged)} unchanged, {len(self.missing)} missing"
         )
+        return out + (f", {len(self.warnings)} warning(s)" if self.warnings else "")
 
     def render(self) -> str:
         lines = []
@@ -217,6 +256,8 @@ class Plan:
             lines.append(f"  update     {e['name']}: {', '.join(self.changes[e['name']])}")
         for e in self.unchanged:
             lines.append(f"  unchanged  {e['name']}")
+        for n, reason in self.warnings.items():
+            lines.append(f"  warning    {n}: stored disabled, {reason}")
         for n in self.missing:
             if n in self.disabled:
                 note = "disabled"
@@ -236,12 +277,24 @@ def build_plan(session: Session, entries: list[dict], disable_missing: bool = Fa
     rows = {s.name: s for s in session.query(Source).all()}
     in_file = {e["name"] for e in entries}
     for e in entries:
+        e = dict(e)
+        refusal = e.pop("refusal", None)
+        if refusal:
+            plan.warnings[e["name"]] = refusal
         src = rows.get(e["name"])
         if src is None:
+            if refusal:
+                e["last_error"] = refusal
             plan.added.append(e)
             continue
         cur = _current(src)
         diff = [k for k in e if k != "name" and e[k] != cur.get(k)]
+        if refusal and src.last_error != refusal:
+            e["last_error"] = refusal
+            diff.append("last_error")
+        elif not refusal and is_check_error(src.last_error):
+            e["last_error"] = None  # the check passes now: clear our own record, never a scraper's
+            diff.append("last_error")
         if diff:
             plan.updated.append(e)
             plan.changes[e["name"]] = diff
@@ -267,7 +320,7 @@ def _write(session: Session, plan: Plan) -> None:
 
 
 def _columns(e: dict) -> dict:
-    cols = {k: v for k, v in e.items() if k not in ("categories", "tags")}
+    cols = {k: v for k, v in e.items() if k not in ("categories", "tags")}  # incl. last_error
     cols["categories"] = json.dumps(e["categories"])
     if "tags" in e:
         cols["tags"] = json.dumps(e["tags"])

@@ -236,3 +236,114 @@ def test_routes_use_shared_url_and_category_rules():
 
     assert routes.check_source_url is sio.check_source_url
     assert routes.split_categories is sio.split_categories
+
+
+# --- Item 24: a disabled entry whose URL the guard refuses is stored, not a refused file ----------
+
+BLOCKED = "https://lan.example.com/events.ics"  # the fake resolver answers a LAN address
+
+
+def _blocked(name="held", **kw):
+    return _entry(name, **{"url": BLOCKED, "enabled": False, **kw})
+
+
+def test_a_disabled_entry_with_a_refused_url_is_stored_disabled_with_the_reason(session):
+    plan = _apply(session, _doc(_entry("good"), _blocked()))
+    row = session.query(Source).filter_by(name="held").one()
+    assert row.enabled is False and row.url == BLOCKED
+    assert "non-public" in row.last_error and row.last_error.startswith(sio.GUARD_REFUSAL_MARK)
+    assert [e["name"] for e in plan.added] == ["good", "held"]
+    assert set(plan.warnings) == {"held"} and "non-public" in plan.warnings["held"]
+    rendered = plan.render()
+    assert "warning" in rendered and "held" in rendered
+    assert session.query(Source).filter_by(name="good").one().last_error is None
+
+
+def test_the_dry_run_shows_the_warning_and_writes_nothing(session):
+    before = _snapshot(session)
+    plan = sio.run_import(session, _doc(_blocked()))
+    assert "held" in plan.warnings and "warning" in plan.render()
+    assert _snapshot(session) == before
+
+
+def test_an_enabled_entry_with_a_refused_url_still_refuses_the_whole_file(session):
+    before = _snapshot(session)
+    with pytest.raises(sio.ImportRefused) as exc:
+        _apply(session, _doc(_entry("good"), _blocked("held", enabled=True)))
+    assert "non-public" in str(exc.value)
+    assert _snapshot(session) == before
+
+
+def test_a_disabled_entry_that_is_unresolvable_or_not_http_is_stored_too(session):
+    _apply(
+        session,
+        _doc(
+            _entry("gone", url="https://gone.example.com/e.ics", enabled=False),
+            _entry("ftp", url="ftp://x.example.com/", enabled=False),
+        ),
+    )
+    assert "cannot resolve" in session.query(Source).filter_by(name="gone").one().last_error
+    assert "http" in session.query(Source).filter_by(name="ftp").one().last_error
+
+
+def test_a_disabled_entry_still_fails_its_other_checks(session):
+    with pytest.raises(sio.ImportRefused):
+        _apply(session, _doc(_blocked(type="nonesuch")))
+
+
+def test_export_then_import_of_a_stored_refused_entry_is_a_noop(session):
+    _apply(session, _doc(_blocked()))
+    before = _snapshot(session)
+    plan = sio.run_import(session, sio.export_yaml(session), apply=True)
+    assert not plan.added and not plan.updated, plan.render()
+    assert set(plan.warnings) == {"held"}  # still worth a warning, not a change
+    assert _snapshot(session) == before
+    # and a second import of the file itself changes nothing
+    plan = _apply(session, _doc(_blocked()))
+    assert not plan.added and not plan.updated
+
+
+def test_enabling_a_stored_refused_entry_through_an_import_refuses_the_file(session):
+    _apply(session, _doc(_blocked()))
+    before = _snapshot(session)
+    with pytest.raises(sio.ImportRefused) as exc:
+        _apply(session, _doc(_blocked("held", enabled=True)))
+    assert "non-public" in str(exc.value)
+    assert _snapshot(session) == before
+    assert session.query(Source).filter_by(name="held").one().enabled is False
+
+
+def test_a_later_import_whose_url_now_passes_clears_the_guard_error(session):
+    _apply(session, _doc(_blocked()))
+    plan = _apply(session, _doc(_entry("held", enabled=False)))  # a public URL now
+    assert [e["name"] for e in plan.updated] == ["held"]
+    row = session.query(Source).filter_by(name="held").one()
+    assert row.last_error is None and row.enabled is False and not plan.warnings
+
+
+def test_enabling_with_a_url_that_now_passes_clears_it_and_enables(session):
+    _apply(session, _doc(_blocked()))
+    _apply(session, _doc(_entry("held", enabled=True)))
+    row = session.query(Source).filter_by(name="held").one()
+    assert row.enabled is True and row.last_error is None
+
+
+def test_a_scraper_error_is_not_cleared_by_the_guard_pass(session):
+    _apply(session, _doc(_entry("held", enabled=False)))
+    row = session.query(Source).filter_by(name="held").one()
+    row.last_error = "HTTP 500 from the venue"
+    session.commit()
+    _apply(session, _doc(_entry("held", enabled=False)))
+    assert (
+        session.query(Source).filter_by(name="held").one().last_error == "HTTP 500 from the venue"
+    )
+
+
+def test_the_scraper_never_fetches_a_disabled_source(session, monkeypatch):
+    from app import jobs
+
+    _apply(session, _doc(_blocked()))
+    called = []
+    monkeypatch.setattr(jobs, "get_scraper", lambda src, cfg: called.append(src.name))
+    jobs.run_all_scrapers()
+    assert called == []
