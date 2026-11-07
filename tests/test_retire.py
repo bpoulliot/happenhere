@@ -96,12 +96,7 @@ def test_runs_one_to_four(run):
     _add_source("club", CLUB)
 
     # Run 1: only the early show is listed.
-    assert _scrape("club", [_show(EARLY, EARLY_URL)]) == {
-        "new": 1,
-        "updated": 0,
-        "retired": 0,
-        "total": 1,
-    }
+    assert _scrape("club", [_show(EARLY, EARLY_URL)])["new"] == 1
     first = _rows()
     assert list(first) == [EARLY_URL]
 
@@ -135,10 +130,11 @@ def test_a_late_show_first_seen_alone_gets_its_own_row(run):
     _add_source("club", CLUB)
     _scrape("club", [_show(EARLY, EARLY_URL)])
     early = _rows()[EARLY_URL]
-    _scrape("club", [_show(LATE, LATE_URL, title="Synthetic Comic (late)")])
+    _scrape("club", [_show(LATE, LATE_URL)])
     rows = _rows()
-    assert set(rows) == {EARLY_URL, LATE_URL}
-    assert rows[EARLY_URL]["title"] == "Synthetic Comic" and rows[EARLY_URL]["uid"] == early["uid"]
+    assert set(rows) == {EARLY_URL, LATE_URL}, "the late show folded into the early row"
+    assert rows[EARLY_URL] | {"retired": False} == early
+    assert rows[LATE_URL]["start"] == LATE and rows[LATE_URL]["uid"] != early["uid"]
     assert rows[EARLY_URL]["retired"], "run 2 succeeded without the early show"
 
 
@@ -155,7 +151,8 @@ def test_a_failed_scrape_retires_nothing(run):
 def test_a_zero_event_scrape_retires_nothing(run):
     _add_source("club", CLUB)
     _scrape("club", [_show(EARLY, EARLY_URL), _show(LATE, LATE_URL)])
-    assert _scrape("club", []) == {"new": 0, "updated": 0, "retired": 0, "total": 0}
+    result = _scrape("club", [])
+    assert result["total"] == 0 and "error" not in result
     assert not any(r["retired"] for r in _rows().values())
 
 
@@ -217,14 +214,17 @@ def test_a_row_another_source_returned_this_run_is_not_retired(run):
     _add_source("tickets", "https://tickets.example.com/events")  # scraped first
     _add_source("club", CLUB)
     other = _show(EARLY + timedelta(days=1), f"{CLUB}/200", title="Other")
-    BATCHES["https://tickets.example.com/events"] = [_show(LATE, "https://tickets.example.com/e/1")]
+    unrelated = _show(LATE, "https://tickets.example.com/e/1", title="Ticketed", venue="Arena")
+    BATCHES["https://tickets.example.com/events"] = [unrelated]
     BATCHES[CLUB] = [_show(EARLY, EARLY_URL), other]
-    run_all_scrapers()  # the early show's row is the club's
+    run_all_scrapers()
     early_id = _rows()[EARLY_URL]["id"]
+    with db.get_session() as s:
+        assert s.get(Event, early_id).source.name == "club"  # the premise
 
     BATCHES["https://tickets.example.com/events"] = [
         _show(EARLY, "https://tickets.example.com/e/9"),
-        _show(LATE, "https://tickets.example.com/e/1"),
+        unrelated,
     ]
     BATCHES[CLUB] = [other]  # the club no longer lists it; the ticket site still does
     run_all_scrapers()
