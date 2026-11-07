@@ -24,6 +24,12 @@ class Source(Base):
     enabled = Column(Boolean, default=True, nullable=False)
     error_count = Column(Integer, default=0)
     last_error = Column(Text)
+    # Item 06, the canary (app/canary.py): consecutive scrape runs the source had no upcoming
+    # events / a non-zero error_count, and when it last alerted (NULL = not alerted, or an alert
+    # whose POST failed, which the next run retries).
+    empty_runs = Column(Integer, default=0)
+    error_runs = Column(Integer, default=0)
+    canary_alerted_at = Column(DateTime)
 
     events = relationship("Event", back_populates="source")
 

@@ -18,6 +18,7 @@ from sqlalchemy.orm import joinedload
 from .. import auth as _auth
 from .. import digest as _digest
 from .. import oidc as _oidc
+from ..canary import conditions as canary_conditions
 from ..config import Config, get_config, save_config_fields
 from ..db import get_session
 from ..ical_export import feed_rows, generate_ics
@@ -519,6 +520,11 @@ def _src_to_dict(s: Source) -> dict:
         "error_count": s.error_count or 0,
         "last_error": (s.last_error or "")[:120],
         "guard_refused": s.last_error is not None and is_check_error(s.last_error),
+        "canary": canary_conditions(s),
+        "canary_pending": bool(canary_conditions(s)) and s.canary_alerted_at is None,
+        "canary_alerted": (
+            s.canary_alerted_at.strftime("%Y-%m-%d %H:%M") if s.canary_alerted_at else ""
+        ),
     }
 
 
