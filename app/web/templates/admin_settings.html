@@ -24,7 +24,7 @@
         <div class="form-group">
           <label>ZIP Code</label>
           <input type="text" name="city_zip" value="{{ cfg.city_zip }}" placeholder="e.g. 97201" maxlength="10">
-          <small>Used by Ticketmaster and other radius-based APIs</small>
+          <small>Kept for radius-based sources; the regional Ticketmaster source carries its own area (latlong + radius) in its URL</small>
         </div>
         <div class="form-group">
           <label>Radius (miles)</label>

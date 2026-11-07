@@ -225,9 +225,7 @@ def test_an_event_on_a_window_boundary_is_kept_once(fake):
 
 def test_every_requested_window_together_covers_the_look_ahead(fake):
     _scraper().scrape()
-    spans = sorted(
-        {(_parse(r["startDateTime"]), _parse(r["endDateTime"])) for r in fake.requests}
-    )
+    spans = sorted({(_parse(r["startDateTime"]), _parse(r["endDateTime"])) for r in fake.requests})
     assert spans[0][0] == T0 and spans[-1][1] == T0 + timedelta(days=365)
     for (_, a_end), (b_start, _) in zip(spans, spans[1:], strict=False):
         assert a_end == b_start
@@ -249,17 +247,20 @@ def test_a_window_over_the_cap_is_halved_and_nothing_is_lost(fake):
 
 
 def test_a_one_day_window_still_over_the_cap_keeps_its_first_1000_and_warns(fake, caplog):
-    day = T0 + timedelta(days=3)
-    fake.events = {"12.5,-45.25": _spread("a", 1300, day, timedelta(hours=20))}
+    # 2,500 events in ten minutes: however the windows fall, a window of at most one day holds
+    # more than 1,000 of them (a burst cut in two leaves one part with 1,250 or more).
+    burst = T0 + timedelta(days=3, hours=5)
+    fake.events = {"12.5,-45.25": _spread("a", 2500, burst, timedelta(minutes=10))}
     s = _scraper()
     with caplog.at_level(logging.WARNING, logger="app.scrapers.ticketmaster"):
         events = s.scrape()
-    assert len(events) == 1000
+    assert 1000 <= len(events) < 2500
+    capped = [w for w in s.windows if w["action"] == "capped"]
+    assert all(w["fetched"] == 1000 for w in capped)
     assert s.incomplete
     assert s.warnings and "1,000" in s.warnings[0]
     assert "1,000" in caplog.text
-    capped = [w for w in s.windows if w["action"] == "capped"]
-    assert len(capped) == 1 and capped[0]["end"] - capped[0]["start"] <= timedelta(days=1)
+    assert capped and all(w["end"] - w["start"] <= timedelta(days=1) for w in capped)
 
 
 # --- pacing and the request ceiling ---------------------------------------------------------
@@ -380,7 +381,7 @@ def test_import_refuses_an_enabled_regional_entry_without_a_location(session):
     with pytest.raises(ImportRefused) as exc:
         run_import(session, _doc(API, True), apply=True)
     assert "latlong" in str(exc.value) and "radius" in str(exc.value)
-    assert session.query(Source).count() == 0
+    assert session.query(Source).filter_by(name="tm-a").count() == 0
 
 
 def test_import_stores_a_disabled_regional_entry_without_a_location_with_a_warning(session):
@@ -420,7 +421,12 @@ def client(monkeypatch, tmp_path):
 
 
 def _form(url: str, enabled: str = "on") -> dict:
-    return {"display_name": "Regional A", "scraper_type": "ticketmaster", "url": url, "enabled": enabled}
+    return {
+        "display_name": "Regional A",
+        "scraper_type": "ticketmaster",
+        "url": url,
+        "enabled": enabled,
+    }
 
 
 def test_the_form_refuses_an_enabled_regional_source_without_a_location(client):
@@ -428,7 +434,7 @@ def test_the_form_refuses_an_enabled_regional_source_without_a_location(client):
         r = http.post("/admin/sources", data=_form(API))
     assert r.status_code == 400 and "latlong" in r.text and "radius" in r.text
     with db.get_session() as s:
-        assert s.query(Source).filter_by(type="ticketmaster").count() == 0
+        assert s.query(Source).filter_by(display_name="Regional A").count() == 0
 
 
 def test_the_form_stores_a_disabled_one_and_the_toggle_refuses_to_enable_it(client):

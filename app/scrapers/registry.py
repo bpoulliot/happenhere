@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from .base import BaseScraper
 
-# Regional aggregators keep their own classes; they use config.city_zip/radius
+# Regional aggregators keep their own classes. Eventbrite and Meetup use the configured city;
+# the regional Ticketmaster source carries its own location in its URL (item 22).
 from .eventbrite import EventbriteScraper
 from .generic import (
     GenericICalScraper,
@@ -74,8 +75,8 @@ def get_scraper(source, config) -> BaseScraper | None:
     if cls is None:
         return None
 
-    # Regional aggregators don't use URL/venue_name from source
-    if source.type in ("ticketmaster", "eventbrite", "meetup", "fathom"):
+    # These regional aggregators don't use URL/venue_name from source
+    if source.type in ("eventbrite", "meetup", "fathom"):
         return cls(config)
 
     return cls(config, source_url=source.url or "", venue_name=source.display_name or "")
