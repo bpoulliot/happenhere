@@ -502,3 +502,15 @@ def test_a_disabled_source_shows_no_badge(env, admin):
         r = http.get("/admin")
     assert r.status_code == 200
     assert "data-canary" not in r.text
+
+
+def test_disabling_a_tripped_source_hides_its_badge_before_the_next_run(env, admin):
+    add_source("held")
+    run(2)  # tripped and alerted
+    with db.get_session() as s:
+        s.query(Source).filter_by(name="held").one().enabled = False
+        s.commit()
+    with admin as http:
+        r = http.get("/admin")
+    assert r.status_code == 200
+    assert "data-canary" not in r.text
