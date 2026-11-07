@@ -887,7 +887,7 @@ covering two cities needs two searches, which one ZIP setting cannot express.
 exactly once with no gap or overlap; a window over the cap is halved; a second source with
 another location does not change the first; a source without `latlong` is refused.
 
-### 23 — JSON-LD events under a `Place`'s `Events` key — READY
+### 23 — JSON-LD events under a `Place`'s `Events` key — DONE
 
 **Found in a deployment (2026-11-04).** A ticketing platform (Seat Engine) publishes one JSON-LD
 `Place` whose capitalised `Events` key lists every event. `extract_jsonld_events`
@@ -897,7 +897,20 @@ This is item 12's gap G2 (`Place.event`) with one more key spelling. **Spec:** w
 `Place` (or a subtype), take the events under `event`, `events` and `Events` (a list or a single
 object), each kept only if it is an Event type (item 12's G1 subtypes included), de-duplicated
 with top-level events; whichever of items 12 and 23 runs first does both spellings, and the other
-records that. **Covered by item 12, PR #34; 23 verifies and closes.** **Tests:** synthetic fixtures for each key spelling, a single object and a list;
+records that. **Built by item 12, PR #34; item 23 verified it case by case and closed it (2026-11-06).**
+
+| Case | Test (`tests/test_jsonld_nested.py`) |
+|---|---|
+| key `event`, `events`, `Events`; a list | `test_nested_list_under_a_place[event/events/Events]` |
+| the same three keys; a single object | `test_nested_single_object_under_a_place[...]` |
+| container is a `Place` | the two tests above |
+| container is a `Place` subtype or a list-valued `@type` | `test_nested_under_a_place_subtype` (added by 23; the reader never looked at the container's type, so it needed no code change) |
+| container in `@graph`, or in a top-level list | `test_nested_under_a_graph_item[...]`, `test_nested_under_a_top_level_list_item` |
+| only Event types kept (G1 subtypes included, a nested `EducationEvent` too) | `test_g1_event_subtypes_are_read`, `test_g1_list_valued_type`, `test_nested_non_events_are_dropped`, `test_nested_under_a_place_subtype` |
+| the same event top level and nested is read once; no `url` falls back to `(name, startDate)` | `test_top_level_and_nested_copy_of_one_event_is_read_once`, `test_duplicates_without_url_fall_back_to_name_and_start`, `test_two_events_sharing_a_listing_url_are_not_merged_when_starts_differ` |
+| URL detection reports type `jsonld` and the count, per key spelling | `test_detection_reports_jsonld_with_the_nested_count[...]` |
+
+No case was missing. **Tests (spec):** synthetic fixtures for each key spelling, a single object and a list;
 detection reports the type `jsonld` and the count; a page with the same event both top-level and
 nested yields it once.
 
