@@ -52,7 +52,7 @@ item that is not READY.
 | 21 | 0 | Secrets in logs: request lines and error text carry API keys from query strings | **DONE** |
 | 22 | 1 | Ticketmaster regional search: `postalCode` ignores the radius; a real area search passes the 1,000-result cap | **READY** |
 | 23 | 1 | JSON-LD: events listed under a `Place`'s capitalised `Events` key are missed by detection and the scraper | **READY** |
-| 24 | 1 | Import: a disabled entry whose URL fails the network guard refuses the whole file | **READY** |
+| 24 | 1 | Import: a disabled entry whose URL fails the network guard is stored disabled, not a refused file | **DONE** |
 | 25 | 0 | A same-title show first seen in a later run gets its own row; rows a source stops listing retire | **DONE** |
 | 26 | 0 | Scrapers that can return a truncated list retire events that are still on (item 25) | **NEEDS DECISION** |
 | 27 | 1 | A second show of a day (stored under `timed_hash`) whose time moves gets a new row and UID (item 15) | **NEEDS DECISION** |
@@ -914,7 +914,7 @@ No case was missing. **Tests (spec):** synthetic fixtures for each key spelling,
 detection reports the type `jsonld` and the count; a page with the same event both top-level and
 nested yields it once.
 
-### 24 — Import: a disabled entry with a refused URL refuses the whole file — READY
+### 24 — Import: a disabled entry with a refused URL is stored disabled, not a refused file — DONE
 
 **Found in a deployment (2026-11-04).** `python -m app.sources import` checks every entry's URL
 through `netguard`, enabled or not, and one refusal refuses the file (item 05's rule). A source
@@ -937,10 +937,32 @@ ever fetched.* **Decided (owner, 2026-11-06): (b).** Spec:
    the guard on its URL and refuses the change if it still fails, with the reason shown.
 3. The scraper never fetches a disabled source (unchanged), so nothing unchecked is fetched.
 4. Export writes the entry like any other (round trip stays a no-op).
+5. (Decided with the build.) A stored disabled entry whose URL passes the guard on a later import
+   has the guard-refusal `last_error` cleared; any other `last_error` (a scraper's) stays.
 
 **Tests:** a disabled entry with a refused URL imports (stored, disabled, `last_error` set,
 warning in the plan); the same entry enabled refuses the file; enabling the stored source in the
 admin form and through an import both re-check and refuse; export → import is a no-op.
+
+**Built (DONE):**
+* `app/sources.py`: `failed_check(enabled, label, errors, message, last_error)` is the one place a
+  failed per-entry check is judged: an enabled entry refuses the file, a disabled one returns the
+  `last_error` to store and the plan shows `warning  <name>: stored disabled, <reason>` (summary
+  gains `, N warning(s)`). **Item 22 calls it** for a regional source with no location; its
+  `last_error` must start with a mark in `CHECK_ERROR_MARKS` (today `GUARD_REFUSAL_MARK`,
+  `"url refused: "`), which is how a later import knows the record is its own and clears it.
+* Admin (`app/web/routes.py`): the toggle, the edit form and the create form run the guard when
+  the source ends up **enabled** and answer 400 with fixed text per reason code (`netguard.REASONS`,
+  via the new `NonPublicURL.code`; never the exception text). A save that leaves a source
+  **disabled** stores it with the refusal as `last_error` instead of refusing, so a stored source
+  stays editable. Disabling never runs the guard. The admin list shows `⚠ URL refused` (reason in
+  the tooltip), and a refused toggle puts the button back (`hx-on::response-error`).
+* Tests: `tests/test_sources_io.py` (import, dry run, round trip, enabling by import, clearing,
+  a scraper's error kept, the scraper never fetches a disabled source) and
+  `tests/test_disabled_source_guard.py` (toggle, edit, create, admin render, fixed-text 400).
+* Failing first: 15 of the 44 tests in those two files failed against the unchanged code.
+  Mutants: skipping the re-check in the toggle, skipping it in the forms, and letting an enabled
+  refused entry through each fail their tests.
 
 ### 25 — A same-title show first seen in a later run gets its own row; vanished rows retire — DONE
 

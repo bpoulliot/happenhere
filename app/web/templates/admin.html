@@ -70,12 +70,13 @@
     </td>
     <td>{{ s.last_scraped }}</td>
     <td>
-      {% if s.error_count %}<span class="err-count" title="{{ s.last_error }}">⚠ {{ s.error_count }} err</span>{% endif %}
+      {% if s.error_count %}<span class="err-count" title="{{ s.last_error }}">⚠ {{ s.error_count }} err</span>{% elif s.guard_refused %}<span class="err-count" title="{{ s.last_error }}">⚠ URL refused</span>{% endif %}
     </td>
     <td style="white-space:nowrap;display:flex;gap:.5rem;align-items:center">
       <button class="toggle-btn {{ 'enabled' if s.enabled else 'disabled' }}"
               hx-post="/admin/sources/{{ s.name }}/toggle"
               hx-swap="none"
+              hx-on::response-error="alert(event.detail.xhr.responseText); location.reload()"
               onclick="this.textContent=this.classList.contains('enabled')?'OFF':'ON';this.classList.toggle('enabled');this.classList.toggle('disabled')">
         {{ 'ON' if s.enabled else 'OFF' }}
       </button>

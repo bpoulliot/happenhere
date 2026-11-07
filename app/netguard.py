@@ -17,24 +17,38 @@ from urllib.parse import urlparse
 
 
 class NonPublicURL(ValueError):
-    pass
+    """The URL is refused. ``code`` names why (``REASONS``), so a response can say it in fixed text."""
+
+    def __init__(self, message: str, code: str = "non_public"):
+        super().__init__(message)
+        self.code = code
+
+
+REASONS = {
+    "scheme": "only http(s) URLs are allowed",
+    "no_host": "the URL has no host",
+    "unresolvable": "the host does not resolve",
+    "non_public": "the host resolves to a non-public address",
+}
 
 
 def require_public_url(url: str) -> None:
     parts = urlparse(url)
     if parts.scheme not in ("http", "https"):
-        raise NonPublicURL(f"only http(s) URLs are allowed, got {parts.scheme or 'none'!r}")
+        raise NonPublicURL(
+            f"only http(s) URLs are allowed, got {parts.scheme or 'none'!r}", "scheme"
+        )
     host = parts.hostname
     if not host:
-        raise NonPublicURL("URL has no host")
+        raise NonPublicURL("URL has no host", "no_host")
     try:
         infos = socket.getaddrinfo(host, parts.port or 443, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
-        raise NonPublicURL(f"cannot resolve {host}: {exc}") from exc
+        raise NonPublicURL(f"cannot resolve {host}: {exc}", "unresolvable") from exc
     for info in infos:
         addr = ipaddress.ip_address(info[4][0].split("%", 1)[0])
         if not addr.is_global:
-            raise NonPublicURL(f"{host} resolves to non-public address {addr}")
+            raise NonPublicURL(f"{host} resolves to non-public address {addr}", "non_public")
 
 
 def httpx_request_hook(request) -> None:

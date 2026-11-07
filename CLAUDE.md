@@ -49,7 +49,8 @@ python -m app.sources import sources.yml --apply --disable-missing   # also disa
 ```
 
 Keyed by `name`; never deletes; a bad entry (unknown type, non-public URL, ...) refuses the whole
-file. Inside the container: `docker exec <container> python -m app.sources ...` (add
+file, except that a *disabled* entry whose URL the guard refuses is stored disabled with the
+refusal as its `last_error` and a warning in the plan (enabling it re-runs the guard). Inside the container: `docker exec <container> python -m app.sources ...` (add
 `--db <path>` to name another database).
 
 ## Adding a New Scraper

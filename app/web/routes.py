@@ -23,11 +23,19 @@ from ..db import get_session
 from ..ical_export import feed_rows, generate_ics
 from ..jobs import run_single_scraper
 from ..models import Event, Source, shown_events
-from ..netguard import NonPublicURL
+from ..netguard import REASONS, NonPublicURL
 from ..plugins import get_report as get_plugin_report
 from ..scrapers import ticketmaster_venue
 from ..scrapers.registry import TYPE_LABELS, scraper_types
-from ..sources import _TAG_RE, check_source_url, source_tags, split_categories, split_tags
+from ..sources import (
+    _TAG_RE,
+    GUARD_REFUSAL_MARK,
+    check_source_url,
+    is_check_error,
+    source_tags,
+    split_categories,
+    split_tags,
+)
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -510,6 +518,7 @@ def _src_to_dict(s: Source) -> dict:
         "last_scraped": s.last_scraped.strftime("%Y-%m-%d %H:%M") if s.last_scraped else "Never",
         "error_count": s.error_count or 0,
         "last_error": (s.last_error or "")[:120],
+        "guard_refused": s.last_error is not None and is_check_error(s.last_error),
     }
 
 
@@ -599,6 +608,25 @@ def _ticketmaster_venue_url(url: str) -> tuple[str, PlainTextResponse | None]:
         )
 
 
+def _url_refusal(url: str) -> NonPublicURL | None:
+    """The guard's refusal of ``url``, or None when it passes (item 24)."""
+    try:
+        check_source_url(url)
+    except NonPublicURL as exc:
+        log.warning("source URL refused (non-public or unresolvable): %s", url, exc_info=True)
+        return exc
+    return None
+
+
+def _refused_to_enable(refusal: NonPublicURL) -> PlainTextResponse:
+    """Fixed text per reason code, never the exception's own text (CodeQL stack-trace-exposure)."""
+    reason = REASONS.get(refusal.code, REASONS["non_public"])
+    return PlainTextResponse(
+        f"Source URL refused: {reason}. A source can only be enabled once its URL passes this check.",
+        status_code=400,
+    )
+
+
 @router.post("/admin/sources")
 async def source_create(
     display_name: str = Form(...),
@@ -613,14 +641,9 @@ async def source_create(
         url, refused = _ticketmaster_venue_url(url)
         if refused:
             return refused
-    try:
-        check_source_url(url)
-    except NonPublicURL:
-        log.warning("source URL refused (non-public or unresolvable): %s", url, exc_info=True)
-        return PlainTextResponse(
-            "Source URL refused: it must be http(s) and resolve to a public address.",
-            status_code=400,
-        )
+    refusal = _url_refusal(url)
+    if refusal and enabled == "on":
+        return _refused_to_enable(refusal)
     cats = split_categories(categories)
     try:
         tag_list = split_tags(tags)
@@ -644,6 +667,7 @@ async def source_create(
             categories=json.dumps(cats),
             tags=json.dumps(tag_list),
             enabled=(enabled == "on"),
+            last_error=f"{GUARD_REFUSAL_MARK}{refusal}" if refusal else None,
         )
         session.add(src)
         session.commit()
@@ -664,14 +688,9 @@ async def source_update(
         url, refused = _ticketmaster_venue_url(url)
         if refused:
             return refused
-    try:
-        check_source_url(url)
-    except NonPublicURL:
-        log.warning("source URL refused (non-public or unresolvable): %s", url, exc_info=True)
-        return PlainTextResponse(
-            "Source URL refused: it must be http(s) and resolve to a public address.",
-            status_code=400,
-        )
+    refusal = _url_refusal(url)
+    if refusal and enabled == "on":
+        return _refused_to_enable(refusal)
     cats = split_categories(categories)
     try:
         tag_list = split_tags(tags)
@@ -689,6 +708,10 @@ async def source_update(
             src.categories = json.dumps(cats)
             src.tags = json.dumps(tag_list)
             src.enabled = enabled == "on"
+            if refusal:  # stored disabled, the refusal as its last_error (a scraper's is kept)
+                src.last_error = f"{GUARD_REFUSAL_MARK}{refusal}"
+            elif is_check_error(src.last_error):
+                src.last_error = None
             session.commit()
     return RedirectResponse("/admin", status_code=302)
 
@@ -710,6 +733,12 @@ async def toggle_source(source_name: str):
     with get_session() as session:
         src = session.query(Source).filter_by(name=source_name).first()
         if src:
+            if not src.enabled:  # enabling runs the guard again (item 24); disabling never does
+                refusal = _url_refusal(src.url or "")
+                if refusal:
+                    return _refused_to_enable(refusal)
+                if is_check_error(src.last_error):
+                    src.last_error = None
             src.enabled = not src.enabled
             session.commit()
             return {"enabled": src.enabled}
