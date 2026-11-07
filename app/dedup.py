@@ -54,7 +54,9 @@ def _key(source: Source | None, kind: str, value: str) -> str:
     return hashlib.sha256(f"{name}\x1f{kind}\x1f{value}".encode()).hexdigest()
 
 
-def _is_slot_key(key: str | None, start: datetime, venue: str | None, source: Source | None) -> bool:
+def _is_slot_key(
+    key: str | None, start: datetime, venue: str | None, source: Source | None
+) -> bool:
     """Whether ``key`` is the ``slot`` identity (start time + venue) of this start and venue."""
     return key is not None and key == _key(source, "slot", f"{start.isoformat()}|{_norm(venue)}")
 

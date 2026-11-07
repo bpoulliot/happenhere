@@ -43,7 +43,7 @@ item that is not READY.
 | 12 | 1 | Ticketing platforms as source options: Ticketmaster-by-venue type, wider JSON-LD, platform recognition | **READY** |
 | 13 | 1 | Local scraper plugins: extra source types loaded from a directory outside the repo | **DONE** |
 | 14 | 1 | Configurable notification digest that never repeats an unchanged list | **DONE** |
-| 15 | 0 | A re-scraped event keeps its first start time: a changed time never reaches the feed or the digest | **READY** |
+| 15 | 0 | A re-scraped event keeps its first start time: a changed time never reaches the feed or the digest | **DONE** |
 | 16 | 1 | Eventbrite: the regional scraper is against the site's terms; an API token or the partner program instead | **NEEDS DECISION** |
 | 17 | 0 | Hard-coded `America/Denver`: parsed times and the ICS feed ignore the configured timezone | **READY** |
 | 18 | 0 | Two same-title shows on one day in one batch abort the whole scrape run (UNIQUE, no rollback) | **DONE** |
@@ -55,6 +55,7 @@ item that is not READY.
 | 24 | 1 | Import: a disabled entry whose URL fails the network guard refuses the whole file | **READY** |
 | 25 | 0 | A same-title show first seen in a later run gets its own row; rows a source stops listing retire | **DONE** |
 | 26 | 0 | Scrapers that can return a truncated list retire events that are still on (item 25) | **NEEDS DECISION** |
+| 27 | 1 | A second show of a day (stored under `timed_hash`) whose time moves gets a new row and UID (item 15) | **NEEDS DECISION** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -527,7 +528,7 @@ Send test). Tests: `tests/test_digest.py`.
   * gate that fires on any difference, removals included, fails `test_removal_only_does_not_send`,
     `test_passed_events_alone_do_not_send` and the drop-out test: 3 failed, 31 passed.
 
-### 15 — A re-scraped event keeps its first start time — READY
+### 15 — A re-scraped event keeps its first start time — DONE
 
 **Found by item 14, not fixed there.** `upsert_events` (`app/dedup.py`) refreshes title,
 description, end time, address, URL and image on an event it has seen, but never `start_dt` or
@@ -549,6 +550,49 @@ frozenset of identity keys the batch returned (a key shared within the batch exc
 same-source match with a different, non-null key is a new row under `timed_hash`, and the old row
 retires when the scrape no longer returns it. Item 15's "only the time moved" case is the one where
 `row.identity_key not in batch_keys`: that is where an in-place update replaces the new row.
+
+**Built.**
+* **The rule, in item 25's helper:** `is_different_event` became `app/dedup.py`
+  `hash_match(row, ev, key, source, batch_keys)`, which answers every dedup-hash match with a
+  stored row with one of three: `DIFFERENT` (25's new row under `timed_hash`), `MOVED` (this item)
+  or `SAME` (merge as before, the stored start time kept).
+* **`MOVED`:** the stored row is the same source's, and either (1) both identity keys are `slot`
+  keys (start time + venue) and the stored key is not in `batch_keys` (nothing in the batch
+  matched the stored row on its own key), or (2) neither side has a usable key (hash fallback).
+  The row takes the new `start_dt`, `venue_name` and, when no other row holds it, the new identity
+  key; its `uid` and dedup hash stay, and the upsert resolves the event to it, so item 25 does not
+  retire it. A stored key the batch did return (an early and a late show both listed) is
+  `DIFFERENT`, as in item 25.
+* **Only `slot` keys count as a moved time.** A `url` or `uid` key does not change when an event's
+  time does, so a different one is the source naming another event: item 25's
+  `test_a_late_show_first_seen_alone_gets_its_own_row` (run 2 lists only the late show, under its
+  own URL) stays a new row. A row's key is recognised as a `slot` key by recomputing it from the
+  row's own start time and venue.
+* **Cross-source** matches merge as before and never move another source's start time.
+
+**Failing first** (`tests/test_time_moved.py` against `origin/main`): 4 failed, 3 passed. The
+failures: the ROADMAP reproduction (no URL, no UID; 19:00 then 21:00) left two rows, the first at
+19:00; the feed carried the old UID at 19:00 and a new UID at 21:00; a hash-fallback event (a
+series under one URL) kept 19:00; through `run_single_scraper` the moved event became a retired
+19:00 row plus a new 21:00 row with a new UID (`new 1, retired 1`). The 3 that passed are guards:
+an early and a late slot show listed together stay two rows; a cross-source match keeps the stored
+start; a `url` event whose URL changed is a new row.
+
+**Item 25's tests**, unchanged, all pass: the full suite is 228 passed.
+
+**Mutants** (each against the full suite, then reverted):
+* "moved" decided without checking `batch_keys`: fails
+  `test_an_early_and_a_late_slot_show_listed_together_stay_two_rows` (1). Item 25's run-2 test
+  does not catch it: its shows have `url` keys, which are never `MOVED`; the `slot` version of that
+  run 2 is the test above.
+* the UID regenerated on the update: fails the reproduction, the feed test and the scrape-run test
+  (3).
+* the `slot`-kind checks dropped (any different key not in the batch is a moved time): fails item
+  25's `test_a_late_show_first_seen_alone_gets_its_own_row` and the `url` guard (2).
+* the same-source guard dropped: fails item 25's cross-source merge and "another source returned
+  it" tests and the cross-source guard here (3).
+
+**Not covered, filed as item 27:** a second show stored under `timed_hash` whose time moves.
 
 ### 16 — Eventbrite: the regional scraper against the terms; a sanctioned path — NEEDS DECISION
 
@@ -909,7 +953,8 @@ event retires it until it is listed again):
 Filed as **item 26**. Not a STOP: retirement is reversible and a retired row comes back, UID and
 all, when it is listed again.
 
-**Next:** item 15 builds on `is_different_event` and `batch_keys` (its note above).
+**Item 15 landed on top of this:** `is_different_event` is now `hash_match`, which also says when a
+dedup-hash match is the same `slot` event with a moved time (updated in place, same UID).
 
 ### 26 — Scrapers that can return a truncated list retire events that are still on — NEEDS DECISION
 
@@ -934,3 +979,18 @@ scrape lists it again; in a calendar app it disappears and comes back.
 
 **Measure first if wanted:** the retired count per source over a few runs of a deployment says
 which types truncate in practice; item 25's first deployment recorded one run.
+
+### 27 — A second show whose time moves gets a new row and UID — NEEDS DECISION
+
+**Found by item 15, left there.** Item 15 updates a moved event in place only on a dedup-hash
+match (title + date + venue). A second show of one title on one day is stored under `timed_hash`
+(the hash plus its start time, items 18 and 25). If that show's time moves (21:30 to 22:00) while
+the first show is still listed, its new `slot` key matches nothing, its dedup hash resolves to the
+first show (`DIFFERENT`, the key was returned), and its new `timed_hash` matches nothing: it is
+stored as a new row with a new UID and the 21:30 row retires. A calendar app sees a deletion and a
+new event, which item 15 forbids for the first show.
+
+**Decision needed (owner):** (a) on a `DIFFERENT` match, look for a same-source, same-title,
+same-day, same-venue row whose `slot` key the batch did not return, and move it (more matching
+rules, one more query per such event); (b) accept it: a second show whose time moves is rare.
+*Recommended: (b) until a deployment shows it; (a) if it does.*
