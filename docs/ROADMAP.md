@@ -50,10 +50,10 @@ item that is not READY.
 | 19 | 0 | Every `ical` and `spothopper` source fails: the generic scrapers have no `SOURCE_NAME` | **DONE** |
 | 20 | 0 | Orphaned Chromium processes are never reaped while uvicorn is PID 1 | **DONE** |
 | 21 | 0 | Secrets in logs: request lines and error text carry API keys from query strings | **DONE** |
-| 22 | 1 | Ticketmaster regional search: `postalCode` ignores the radius; a real area search passes the 1,000-result cap | **NEEDS DECISION** |
+| 22 | 1 | Ticketmaster regional search: `postalCode` ignores the radius; a real area search passes the 1,000-result cap | **READY** |
 | 23 | 1 | JSON-LD: events listed under a `Place`'s capitalised `Events` key are missed by detection and the scraper | **READY** |
-| 24 | 1 | Import: a disabled entry whose URL fails the network guard refuses the whole file | **NEEDS DECISION** |
-| 25 | 0 | A same-title show first seen in a later run is folded into the earlier show's row | **NEEDS DECISION** |
+| 24 | 1 | Import: a disabled entry whose URL fails the network guard refuses the whole file | **READY** |
+| 25 | 0 | A same-title show first seen in a later run is folded into the earlier show's row | **READY** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -714,7 +714,7 @@ CLI call it. `run_all_scrapers`/`run_single_scraper` store `redact(str(exc))` in
 header; httpx does not log headers). A deployment upgrading from before this item still has old log
 lines and old `last_error` values with the key until the log rotates and the source scrapes again.
 
-### 22 — Ticketmaster regional search ignores the radius — NEEDS DECISION
+### 22 — Ticketmaster regional search ignores the radius — READY
 
 **Found in a deployment (2026-11-04).** The built-in `ticketmaster` type sends `postalCode` +
 `radius` to the Discovery API. Measured: with `postalCode` the API returns only events at venues
@@ -734,8 +734,21 @@ covering two cities needs two searches, which one ZIP setting cannot express.
 2. Whatever is chosen: a source that hits the cap logs it and records it on the source, never
    silently.
 
-**Tests (once decided):** saved-fixture pages; the cap split covers every page exactly once; a
-second area in a second source does not change the first.
+**Decided (owner, 2026-11-06): (b) with (a)'s date windows.** Spec:
+1. The regional `ticketmaster` source carries its own location: its URL holds `latlong=<lat>,<lon>`
+   and `radius` (miles); a source without them is refused on save and on import with a message
+   naming the fields. `postalCode` and the global `city_zip`/`city_radius_miles` are no longer
+   used by this type (other uses of them unchanged). Two areas = two sources.
+2. Paging past the cap: the search runs over date windows (start with the look-ahead split into
+   windows; a window whose `page.totalElements` is over 1,000 is halved and re-run) until every
+   window is under the cap; events are de-duplicated by Ticketmaster id across windows.
+3. A window that still hits the cap at one day logs a warning and records it on the source
+   (`last_error`), never silently.
+4. The key stays in config; item 21's redaction covers the request lines.
+
+**Tests:** saved-fixture pages through a mocked transport; the window split covers the range
+exactly once with no gap or overlap; a window over the cap is halved; a second source with
+another location does not change the first; a source without `latlong` is refused.
 
 ### 23 — JSON-LD events under a `Place`'s `Events` key — READY
 
@@ -751,7 +764,7 @@ records that. **Tests:** synthetic fixtures for each key spelling, a single obje
 detection reports the type `jsonld` and the count; a page with the same event both top-level and
 nested yields it once.
 
-### 24 — Import: a disabled entry with a refused URL refuses the whole file — NEEDS DECISION
+### 24 — Import: a disabled entry with a refused URL refuses the whole file — READY
 
 **Found in a deployment (2026-11-04).** `python -m app.sources import` checks every entry's URL
 through `netguard`, enabled or not, and one refusal refuses the file (item 05's rule). A source
@@ -766,10 +779,20 @@ comment workaround; (b) a **disabled** entry whose URL is refused is stored disa
 refusal as its `last_error` and a warning in the plan, and enabling it (admin form or a later
 import) re-runs the check and refuses there; (c) skip the check for disabled entries without
 recording anything. *Recommended: (b): the file stays the whole truth, and nothing unchecked is
-ever fetched.* **Tests (once decided):** the chosen behaviour for a disabled and an enabled entry
-with a refused URL; enabling it later re-checks.
+ever fetched.* **Decided (owner, 2026-11-06): (b).** Spec:
+1. Import: an entry with `enabled: false` whose URL the guard refuses is stored disabled; the
+   refusal is written to its `last_error` and shown in the plan as a warning (not an error). An
+   **enabled** entry with a refused URL still refuses the file, as now.
+2. Enabling a source (admin form toggle or edit, or a later import with `enabled: true`) re-runs
+   the guard on its URL and refuses the change if it still fails, with the reason shown.
+3. The scraper never fetches a disabled source (unchanged), so nothing unchecked is fetched.
+4. Export writes the entry like any other (round trip stays a no-op).
 
-### 25 — A same-title show first seen in a later run folds into the earlier show — NEEDS DECISION
+**Tests:** a disabled entry with a refused URL imports (stored, disabled, `last_error` set,
+warning in the plan); the same entry enabled refuses the file; enabling the stored source in the
+admin form and through an import both re-check and refuse; export → import is a no-op.
+
+### 25 — A same-title show first seen in a later run folds into the earlier show — READY
 
 **Found by item 18, left there.** Item 18 keeps two same-title shows of one day apart **within one
 batch** (different identity keys → the second gets `timed_hash`). If the late show appears only in
@@ -786,5 +809,28 @@ a later full scrape no longer returns (needs "seen in this run" tracking; overla
 hash-fallback match), or (c) keep merging. *Recommended: (b); (a) alone if (b) waits on item 15.*
 Cross-source matches (the same event from two sources) keep merging either way.
 
-**Tests (once decided):** run 1 stores the early show; run 2 returns early + late: two rows, the
-early row unchanged; a changed URL for the same event under the chosen rule.
+**Decided (owner, 2026-11-06): (b).** Spec:
+1. On the dedup-hash match in `upsert_events`, when the stored row has the **same source** and a
+   **different, non-null identity key**, the new event is a different event: stored under
+   `timed_hash` with its own UID. Cross-source matches keep merging.
+2. **Retiring:** after a source's scrape **succeeds and returns at least one event**, its upcoming
+   rows (start in the future) that this scrape did not return are marked retired (a new nullable
+   `retired_at`; `_migrate_schema`), not deleted. Feeds, the events page, the API and the digest
+   skip retired rows. A retired row that a later scrape returns again is un-retired (same UID).
+   A failed scrape or one that returns 0 events retires nothing (item 06's canary owns that case).
+3. Matching for retirement uses the same identity as the upsert (identity key, else dedup hash),
+   so an unchanged event is never retired.
+
+**Overlap with item 15** (a re-scraped event keeps its first start time): 25(b) covers 15's
+remaining cases in effect but **does not subsume it**. A `slot`-identity event whose time moves
+within the day gets a new key, so under 25 it becomes a new row with a **new UID** and the old row
+is retired: the time is right, but a calendar app sees a deletion and a new event, which item 15's
+spec forbids (the feed UID must not change when a time does). Hash-fallback events (no usable key)
+still merge as before. Item 15 stays READY for that; whichever of 15 and 25 runs second rebases on
+the other, and 15 should prefer "same source, same title and day, only the time moved, nothing
+else matched" as an update over 25's new row.
+
+**Tests:** run 1 stores the early show; run 2 returns early + late: two rows, the early row
+unchanged; run 3 returns only the late show: the early row is retired and leaves the feed; run 4
+returns it again: un-retired, same UID; a failed scrape and a 0-event scrape retire nothing; a
+cross-source duplicate still merges.
