@@ -28,7 +28,7 @@ from zoneinfo import ZoneInfo
 from . import ntfy
 from .config import Config, get_config
 from .db import get_meta, get_session, set_meta
-from .models import Event, NotificationLog
+from .models import Event, NotificationLog, shown_events
 
 log = logging.getLogger(__name__)
 
@@ -184,8 +184,7 @@ def decide(session, cfg: Config, now: datetime | None = None) -> Decision:
     local = _naive_local(now, cfg)
     window = max(1, int(cfg.digest_window_days))
     events = (
-        session.query(Event)
-        .filter(Event.start_dt >= local, Event.start_dt <= local + timedelta(days=window))
+        shown_events(session, local, local + timedelta(days=window))
         .order_by(Event.start_dt, Event.title, Event.id)
         .all()
     )

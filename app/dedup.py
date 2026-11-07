@@ -51,8 +51,40 @@ def identity_key(ev: EventData, source: Source | None) -> str:
     return hashlib.sha256(f"{name}\x1f{kind}\x1f{value}".encode()).hexdigest()
 
 
-def upsert_events(session: Session, events: list[EventData], source_id: int) -> tuple[int, int]:
+def is_different_event(
+    row: Event, key: str | None, source_id: int, batch_keys: frozenset[str]
+) -> bool:
+    """Whether a scraped event that matched ``row`` on the dedup hash (title + date + venue) is
+    a different event after all, and gets a row of its own under ``timed_hash`` (item 25).
+
+    It is when the stored row comes from the **same source** and carries a **different,
+    non-null identity key**: a second show of one title, day and venue, first listed in a later
+    run. The same event from another source keeps merging, and so does an event or a row with
+    no identity key (a key shared within its batch, a row from before item 03).
+
+    ``batch_keys`` is every identity key this batch returned (shared ones excluded). Item 25
+    does not read it; item 15 is to: a stored key that is *not* in it means the source stopped
+    listing that row, so the match may be the same event whose time moved within the day.
+    """
+    return (
+        row.source_id == source_id
+        and key is not None
+        and row.identity_key is not None
+        and row.identity_key != key
+    )
+
+
+def upsert_events(
+    session: Session,
+    events: list[EventData],
+    source_id: int,
+    *,
+    returned: set[int] | None = None,
+) -> tuple[int, int]:
     """Insert new events; refresh seen ones. Returns (new, updated).
+
+    ``returned``, when given, receives the id of every row this batch resolved to, new or seen:
+    what ``retire_unreturned`` must not retire. A retired row that a batch returns is un-retired.
 
     A scraped event is matched first on its identity key (above), then on the dedup hash
     (title + date + venue), which also merges the same event from two sources. Two events in
@@ -63,10 +95,15 @@ def upsert_events(session: Session, events: list[EventData], source_id: int) -> 
     item 18) are one event when their identity keys agree or are absent, and two when the keys
     differ: the second is stored under ``timed_hash`` (the hash plus the start time). The batch
     is tracked here because the session does not autoflush, so a query cannot see it.
+
+    A dedup-hash match with a stored row that ``is_different_event`` says is another event is
+    stored under ``timed_hash`` too (item 25: the late show first seen in a later run).
     """
     source = session.get(Source, source_id)
     keys = [identity_key(ev, source) for ev in events]
     shared = {k for k, n in Counter(keys).items() if n > 1}
+    batch_keys = frozenset(keys) - shared
+    resolved: list[Event] = []
     taken_hashes: set[str] = set()  # this batch's, which a query before commit cannot see
     batch: dict[str, tuple[Event, str | None]] = {}  # dedup hash -> (row, its key) this batch
 
@@ -90,6 +127,7 @@ def upsert_events(session: Session, events: list[EventData], source_id: int) -> 
                 row.dedup_hash = h
             taken_hashes.add(row.dedup_hash)
             batch[row.dedup_hash] = (row, key)
+            resolved.append(row)
             updated_count += 1
             continue
 
@@ -106,6 +144,13 @@ def upsert_events(session: Session, events: list[EventData], source_id: int) -> 
                 continue
 
         row = session.query(Event).filter_by(dedup_hash=h).first()
+        if row is not None and is_different_event(row, key, source_id, batch_keys):
+            h = timed_hash(ev)  # stored in an earlier run: the same rule as within a batch
+            if h in batch:
+                _refresh(batch[h][0], ev)
+                updated_count += 1
+                continue
+            row = session.query(Event).filter_by(dedup_hash=h).first()
         if row is None:
             row = Event(
                 source_id=source_id,
@@ -135,8 +180,37 @@ def upsert_events(session: Session, events: list[EventData], source_id: int) -> 
             updated_count += 1
         taken_hashes.add(h)
         batch[h] = (row, key)
+        resolved.append(row)
     session.commit()
+    if returned is not None:
+        returned.update(row.id for row in resolved)
     return new_count, updated_count
+
+
+def retire_unreturned(session: Session, source_id: int, returned: set[int], now: datetime) -> int:
+    """Retire the source's upcoming rows that its scrape did not return (item 25).
+
+    ``returned`` holds the rows the upsert resolved this batch to (its own identity: the
+    identity key, else the dedup hash), so an unchanged event is never retired; the caller
+    adds the rows other sources returned earlier in the same run, so a row that another source
+    merged into and still lists is kept. Call it only after a scrape that succeeded with at
+    least one event: a failed or empty scrape retires nothing (item 06's canary owns that).
+    Nothing is deleted and nothing else changes, ``last_seen`` included. Returns the count.
+    """
+    ids = [
+        row_id
+        for (row_id,) in session.query(Event.id).filter(
+            Event.source_id == source_id,
+            Event.retired_at.is_(None),
+            Event.start_dt >= now,
+        )
+        if row_id not in returned
+    ]
+    if ids:
+        session.query(Event).filter(Event.id.in_(ids)).update(
+            {Event.retired_at: now, Event.last_seen: Event.last_seen}, synchronize_session=False
+        )
+    return len(ids)
 
 
 def timed_hash(ev: EventData) -> str:
@@ -152,6 +226,7 @@ def legacy_uid(dedup_hash: str) -> str:
 
 def _refresh(row: Event, ev: EventData) -> None:
     row.last_seen = datetime.now()
+    row.retired_at = None  # returned again: un-retired, with the UID it always had (item 25)
     row.title = ev.title
     row.description = ev.description or row.description
     row.end_dt = ev.end_dt or row.end_dt

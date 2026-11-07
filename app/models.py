@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.orm import DeclarativeBase, Query, Session, relationship
 
 
 class Base(DeclarativeBase):
@@ -55,8 +55,29 @@ class Event(Base):
     last_seen = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     # Unused since item 14: the digest compares fingerprints with the last SENT digest.
     notified = Column(Boolean, default=False, nullable=False)
+    # Item 25: set when a successful scrape of the row's source no longer returns it; cleared
+    # when a scrape returns it again. A retired row keeps its UID and every other field, and
+    # no reader sees it (shown_events below).
+    retired_at = Column(DateTime)
 
     source = relationship("Source", back_populates="events")
+
+
+def shown_events(
+    session: Session, start: datetime | None = None, end: datetime | None = None
+) -> Query:
+    """Every event a reader may see, optionally starting inside [start, end].
+
+    Every consumer (the feeds, the events page and calendar, the API, the digest) queries events
+    through here, so none of them can forget that a retired row (item 25) is not shown.
+    ``tests/test_retire.py`` refuses a ``start_dt`` filter written anywhere else.
+    """
+    q = session.query(Event).filter(Event.retired_at.is_(None))
+    if start is not None:
+        q = q.filter(Event.start_dt >= start)
+    if end is not None:
+        q = q.filter(Event.start_dt <= end)
+    return q
 
 
 class NotificationLog(Base):

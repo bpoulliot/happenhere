@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from .dedup import legacy_uid
 from .models import Event as EventRow
+from .models import shown_events
 
 _TZ_NAME = "America/Denver"
 PRODID = "-//happenhere//happenhere//EN"
@@ -33,11 +34,7 @@ def feed_rows(
 ) -> list[EventRow]:
     """Upcoming events within the look-ahead, optionally only from some sources."""
     now = now or datetime.utcnow()
-    q = (
-        session.query(EventRow)
-        .filter(EventRow.start_dt >= now)
-        .filter(EventRow.start_dt <= now + timedelta(days=lookahead_days))
-    )
+    q = shown_events(session, now, now + timedelta(days=lookahead_days))
     if source_ids is not None:
         q = q.filter(EventRow.source_id.in_(source_ids))
     return q.order_by(EventRow.start_dt, EventRow.id).all()

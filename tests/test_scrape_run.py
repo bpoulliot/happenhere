@@ -116,12 +116,12 @@ def test_a_failing_source_is_recorded_and_the_run_goes_on(run, monkeypatch):
 
     real = jobs.upsert_events
 
-    def flaky(session, events, source_id):
+    def flaky(session, events, source_id, **kw):
         if events and events[0].title == "Will Fail":
             # A row the database refuses, flushed: the session is now in a failed transaction.
             session.add(Event(source_id=source_id, dedup_hash=None, title="x", start_dt=EARLY))
             session.flush()
-        return real(session, events, source_id)
+        return real(session, events, source_id, **kw)
 
     monkeypatch.setattr(jobs, "upsert_events", flaky)
     run_all_scrapers()
@@ -138,7 +138,7 @@ def test_run_single_scraper_reports_the_error_instead_of_raising(run, monkeypatc
     BATCHES["https://broken.example.com/"] = [_show(EARLY, title="Will Fail", venue="Broken")]
     import app.jobs as jobs
 
-    def failing(session, events, source_id):
+    def failing(session, events, source_id, **kw):
         session.add(Event(source_id=source_id, dedup_hash=None, title="x", start_dt=EARLY))
         session.flush()
 

@@ -8,7 +8,7 @@ from datetime import datetime
 
 from .config import get_config
 from .db import get_session
-from .dedup import upsert_events
+from .dedup import retire_unreturned, upsert_events
 from .logredact import redact
 from .models import Event, Source
 from .scrapers.registry import get_scraper
@@ -21,6 +21,7 @@ def run_all_scrapers() -> None:
     cfg = get_config()
     with get_session() as session:
         sources = session.query(Source).filter_by(enabled=True).all()
+        seen: set[int] = set()  # rows any source returned this run: none of them retires
         for src in sources:
             scraper = get_scraper(src, cfg)
             if scraper is None:
@@ -28,17 +29,8 @@ def run_all_scrapers() -> None:
                 continue
             try:
                 events = scraper.scrape()
-                # Tag events with source categories if not already set
-                src_cats = json.loads(src.categories or "[]")
-                for ev in events:
-                    if not ev.categories and src_cats:
-                        ev.categories = src_cats
-                new, updated = upsert_events(session, events, src.id)
-                src.last_scraped = datetime.now()
-                src.error_count = 0
-                src.last_error = None
-                session.commit()
-                log.info("%s: %d new, %d updated", src.name, new, updated)
+                result = _store(session, src, events, seen)
+                log.info("%s: %d new, %d updated, %d retired", src.name, *result)
             except Exception as exc:
                 # A failed flush leaves the session unusable until rolled back (item 18): without
                 # this the commit below raised and ended the whole run.
@@ -67,16 +59,9 @@ def run_single_scraper(source_name: str) -> dict:
             return {"error": f"No scraper class for type '{src.type}'"}
         try:
             events = scraper.scrape()
-            src_cats = json.loads(src.categories or "[]")
-            for ev in events:
-                if not ev.categories and src_cats:
-                    ev.categories = src_cats
-            new, updated = upsert_events(session, events, src.id)
-            src.last_scraped = datetime.now()
-            src.error_count = 0
-            src.last_error = None
-            session.commit()
-            return {"new": new, "updated": updated, "total": len(events)}
+            new, updated, retired = _store(session, src, events, set())
+            log.info("%s: %d new, %d updated, %d retired", src.name, new, updated, retired)
+            return {"new": new, "updated": updated, "retired": retired, "total": len(events)}
         except Exception as exc:
             session.rollback()
             src.error_count = (src.error_count or 0) + 1
@@ -86,6 +71,28 @@ def run_single_scraper(source_name: str) -> dict:
             return {"error": redact(str(exc))}
         finally:
             scraper.close()
+
+
+def _store(session, src: Source, events: list, seen: set[int]) -> tuple[int, int, int]:
+    """Store one successful scrape of ``src``; returns (new, updated, retired).
+
+    ``seen`` is the rows earlier sources returned in this run, and gains this scrape's. Only a
+    scrape with at least one event retires anything (item 25).
+    """
+    started = datetime.now()
+    src_cats = json.loads(src.categories or "[]")
+    for ev in events:  # tag events with the source's categories if they have none
+        if not ev.categories and src_cats:
+            ev.categories = src_cats
+    returned: set[int] = set()
+    new, updated = upsert_events(session, events, src.id, returned=returned)
+    seen |= returned
+    retired = retire_unreturned(session, src.id, seen, started) if events else 0
+    src.last_scraped = datetime.now()
+    src.error_count = 0
+    src.last_error = None
+    session.commit()
+    return new, updated, retired
 
 
 def _backfill_pexels_images() -> None:

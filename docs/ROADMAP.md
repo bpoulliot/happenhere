@@ -23,7 +23,7 @@ item that is not READY.
   narrowest count) and the Docker build. `main` takes changes only through a PR with all of them
   green.
 
-**Next free item number: 26.** Always re-read it here before filing.
+**Next free item number: 27.** Always re-read it here before filing.
 
 ## Items
 
@@ -53,7 +53,8 @@ item that is not READY.
 | 22 | 1 | Ticketmaster regional search: `postalCode` ignores the radius; a real area search passes the 1,000-result cap | **READY** |
 | 23 | 1 | JSON-LD: events listed under a `Place`'s capitalised `Events` key are missed by detection and the scraper | **READY** |
 | 24 | 1 | Import: a disabled entry whose URL fails the network guard refuses the whole file | **READY** |
-| 25 | 0 | A same-title show first seen in a later run is folded into the earlier show's row | **READY** |
+| 25 | 0 | A same-title show first seen in a later run gets its own row; rows a source stops listing retire | **DONE** |
+| 26 | 0 | Scrapers that can return a truncated list retire events that are still on (item 25) | **NEEDS DECISION** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -504,8 +505,8 @@ Send test). Tests: `tests/test_digest.py`.
   passed while the app was down is skipped, not run late, and the phase is kept. With no anchor the
   first slot is the next `digest_time`.
 * **Gate:** the last SENT digest's fingerprints are stored (`digest_last_sent_fingerprints`), written
-  only after a successful post. A fingerprint is a hash of `event_identity(ev)` (today the dedup
-  hash; item 03's stable UID replaces that one function), title, start time and venue. Sends iff at
+  only after a successful post. A fingerprint is a hash of `event_identity(ev)` (the feed UID since
+  item 03; the dedup hash for a row stored before it), title, start time and venue. Sends iff at
   least one entry is not in that set, or nothing has ever been sent. All entries are fingerprinted,
   not just the 20 listed.
 * **`NotificationLog.status`:** `sent`, `skipped-unchanged`, `skipped-empty`, `failed`. "ntfy not
@@ -541,6 +542,13 @@ does). **Test:** the reproduction above, plus a feed test that the UID is unchan
 new `start_dt` and `venue_name` (`test_a_moved_event_keeps_its_uid_and_its_new_time`). What is left
 is the dedup-hash match: a `slot`-identity event whose time moves within the day (its key changes,
 the hash matches), and a hash-fallback event. The reproduction above (no URL, no UID) still holds.
+
+*Since item 25:* the rule "a dedup-hash match is a different event" lives in one function,
+`app/dedup.py` `is_different_event(row, key, source_id, batch_keys)`; `batch_keys` is the
+frozenset of identity keys the batch returned (a key shared within the batch excluded). Today a
+same-source match with a different, non-null key is a new row under `timed_hash`, and the old row
+retires when the scrape no longer returns it. Item 15's "only the time moved" case is the one where
+`row.identity_key not in batch_keys`: that is where an in-place update replaces the new row.
 
 ### 16 — Eventbrite: the regional scraper against the terms; a sanctioned path — NEEDS DECISION
 
@@ -792,7 +800,7 @@ ever fetched.* **Decided (owner, 2026-11-06): (b).** Spec:
 warning in the plan); the same entry enabled refuses the file; enabling the stored source in the
 admin form and through an import both re-check and refuse; export → import is a no-op.
 
-### 25 — A same-title show first seen in a later run folds into the earlier show — READY
+### 25 — A same-title show first seen in a later run gets its own row; vanished rows retire — DONE
 
 **Found by item 18, left there.** Item 18 keeps two same-title shows of one day apart **within one
 batch** (different identity keys → the second gets `timed_hash`). If the late show appears only in
@@ -834,3 +842,95 @@ else matched" as an update over 25's new row.
 unchanged; run 3 returns only the late show: the early row is retired and leaves the feed; run 4
 returns it again: un-retired, same UID; a failed scrape and a 0-event scrape retire nothing; a
 cross-source duplicate still merges.
+
+**Built.**
+* **The rule, in one place:** `app/dedup.py` `is_different_event(row, key, source_id, batch_keys)`.
+  `upsert_events` asks it on every dedup-hash match with a stored row; on "different" the event is
+  looked up and stored under `timed_hash` with its own UID (the rule item 18 already applied within
+  one batch). `batch_keys` (every identity key the batch returned, shared keys excluded) is passed
+  for item 15 and not read here.
+* **Retiring:** `Event.retired_at` (nullable; `_migrate_schema` adds it and logs
+  `Schema: added events.retired_at`). `app/jobs.py` `_store` runs both scrape paths (the scheduled
+  run and the admin's single-source scrape): after a scrape with at least one event,
+  `dedup.retire_unreturned` sets `retired_at` on the source's rows that start after the scrape
+  began and that the upsert did not resolve to. Matching is the upsert's own (`upsert_events(...,
+  returned=)` collects the rows it resolved each event to: identity key, else dedup hash), so an
+  unchanged event is never retired. In a full run the rows every earlier source returned are kept
+  too: a row that another source merged into and still lists does not retire with the source that
+  stored it. A single-source scrape knows only its own rows, so such a row can retire there and is
+  un-retired by the next full run. Retiring changes nothing else, `last_seen` included; a row that
+  any scrape returns again is un-retired by `_refresh`, keeping its UID. The admin's scrape result
+  shows the retired count.
+* **One filter:** `app/models.py` `shown_events(session, start, end)` is the only query of events a
+  reader sees: the feeds and `/feeds`, the events page, its partial and calendar, `/api/events`, the
+  category list and the digest. `test_every_event_window_query_goes_through_the_one_filter` fails on
+  a `start_dt` filter written anywhere else in `app/`.
+* **Digest:** a retired row leaves the digest; its fingerprint missing is a removal, so a retirement
+  alone sends nothing (item 14's gate, unchanged). A retired row keeps every field.
+
+**Failing first** (`tests/test_retire.py` against `origin/main` before the change): 9 failed, 7
+passed. The failures: run 2 "the late show has no row of its own" (listed before the early show it
+folded into it); "the late show folded into the early row" when it is listed alone; a retired row
+returned by a full run; the four consumer tests and the migration test (`no such column:
+retired_at`); the one-filter test (7 `start_dt` filters outside the helper). The 7 that passed are
+the guards the mutants below need: a failed scrape, a 0-event scrape, a past row and an unchanged
+event retire nothing; a cross-source duplicate merges; a row another source returned this run is
+kept; a same-source row with no identity key still merges.
+
+**Mutants** (each against the full suite, 221 tests, then reverted):
+* retire on a 0-event scrape: fails `test_a_zero_event_scrape_retires_nothing` (1 failed).
+* `is_different_event` always false (merging as before): fails `test_runs_one_to_four` and
+  `test_a_late_show_first_seen_alone_gets_its_own_row` (2).
+* the same-source condition removed: fails `test_a_cross_source_duplicate_still_merges` and
+  `test_a_row_another_source_returned_this_run_is_not_retired` (2).
+* `shown_events` ignoring `retired_at`: fails the feed, events-page, API and digest tests and run 3
+  (5).
+* the feed, the digest, or the events page/API querying around `shown_events`: fails that
+  consumer's test and the one-filter test (3, 2 and 3).
+* rows other sources returned this run not protected: fails
+  `test_a_row_another_source_returned_this_run_is_not_retired` (1).
+* a returned row not un-retired: fails run 4 and `test_a_retired_row_returned_by_a_full_run_keeps_its_uid` (2).
+
+**Truncated lists** (read from each built-in type's code; a type that can stop listing a real
+event retires it until it is listed again):
+
+| Type | Can it truncate? | Why |
+|---|---|---|
+| `ticketmaster` | yes | Pages of 200 by date; the API stops at 1,000 results (item 22 measured a metro search losing its tail), so the furthest-out events drop once the near term fills. |
+| `eventbrite` | yes | Four fixed scrolls of a lazy-loading page; it also keeps one event per title (first 40 characters) and day, so a second show that day is never returned. |
+| `meetup` | yes | Three fixed scrolls of a lazy-loading search page. |
+| `ical` | yes, by site | One GET, no paging. A WordPress events-calendar export can carry only the events of the list page it was exported from (that plugin's export follows the current view; not checked against a live feed here); a full calendar feed is complete. |
+| `jsonld` | yes, by site | One page, no "next" link followed; a site that pages its list loses what is past page 1, and a new early event pushes the last one off it. |
+| `playwright_jsonld` | yes, by site | One render, no scrolling: a lazy-loading list gives what the first view loads. |
+| `squarespace` | yes, by site | One page of the events collection; a paginated collection loses its later pages. |
+| `spothopper` | yes, by site | One page of the widget; both variants also keep one event per title and day. |
+| `fathom` | no cap in code | One render of the releases page, every card read. Whether the page lists every release was not determined. |
+
+Filed as **item 26**. Not a STOP: retirement is reversible and a retired row comes back, UID and
+all, when it is listed again.
+
+**Next:** item 15 builds on `is_different_event` and `batch_keys` (its note above).
+
+### 26 — Scrapers that can return a truncated list retire events that are still on — NEEDS DECISION
+
+**Found by item 25.** Item 25 retires a source's upcoming rows that a successful scrape (at least
+one event) did not return. Every built-in type except `fathom` can return less than the source's
+whole list (item 25's table): fixed scroll counts (`eventbrite`, `meetup`), a 1,000-result paging
+cap (`ticketmaster`, item 22), one page with no paging (`ical` exports of a list view, `jsonld`,
+`squarespace`, `spothopper`, `playwright_jsonld`), and per-title-per-day de-duplication inside
+`eventbrite` and `spothopper` that drops a second show. Such a row leaves the feeds until a later
+scrape lists it again; in a calendar app it disappears and comes back.
+
+**Decision needed (owner):**
+1. (a) A per-type flag (`COMPLETE_LIST = False`) on the types that cannot see the whole list, which
+   then retire nothing; (b) fix each type to read the whole list (scroll until no new card, follow
+   "next" links, item 22's date windows for Ticketmaster) and keep retiring everywhere; (c) retire
+   only rows starting before the latest event the scrape returned (a list cut at its far end then
+   retires nothing past the cut),
+   which covers the paging and scroll caps but not the per-day de-duplication.
+2. Whether a plugin type declares the same flag.
+*Recommended: (c) for every type, plus removing the per-title-per-day de-duplication in
+`eventbrite` and `spothopper` (item 18's `timed_hash` already keeps two shows apart).*
+
+**Measure first if wanted:** the retired count per source over a few runs of a deployment says
+which types truncate in practice; item 25's first deployment recorded one run.

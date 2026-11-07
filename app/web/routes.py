@@ -21,7 +21,7 @@ from ..config import get_config, save_config_fields
 from ..db import get_session
 from ..ical_export import feed_rows, generate_ics
 from ..jobs import run_single_scraper
-from ..models import Event, Source
+from ..models import Event, Source, shown_events
 from ..netguard import NonPublicURL
 from ..plugins import get_report as get_plugin_report
 from ..scrapers.registry import TYPE_LABELS, scraper_types
@@ -214,10 +214,8 @@ def _query_events(session, days=30, category="", source="", search="") -> dict:
     now = datetime.now()
     cutoff = now + timedelta(days=days)
     q = (
-        session.query(Event)
+        shown_events(session, now, cutoff)
         .options(joinedload(Event.source))
-        .filter(Event.start_dt >= now)
-        .filter(Event.start_dt <= cutoff)
         .order_by(Event.start_dt)
     )
     rows = q.all()
@@ -235,7 +233,12 @@ def _query_events(session, days=30, category="", source="", search="") -> dict:
 
 
 def _all_categories(session) -> list[str]:
-    rows = session.query(Event.categories).filter(Event.categories.isnot(None)).all()
+    rows = (
+        shown_events(session)
+        .filter(Event.categories.isnot(None))
+        .with_entities(Event.categories)
+        .all()
+    )
     cats: set[str] = set()
     for (raw,) in rows:
         try:
@@ -311,10 +314,8 @@ async def calendar_page(request: Request, month: str = ""):
 
     with get_session() as session:
         rows = (
-            session.query(Event)
+            shown_events(session, first_day, last_day.replace(hour=23, minute=59))
             .options(joinedload(Event.source))
-            .filter(Event.start_dt >= first_day)
-            .filter(Event.start_dt <= last_day.replace(hour=23, minute=59))
             .order_by(Event.start_dt)
             .all()
         )
