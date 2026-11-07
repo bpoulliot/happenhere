@@ -191,7 +191,7 @@ def test_feed_wall_clock_time_is_the_stored_time(session, set_tz):
 def test_feed_vtimezone_carries_the_zone_rules(session, set_tz):
     set_tz(LONDON)
     cal = _parsed(generate_ics(session, now=datetime(2030, 1, 1)))
-    tz = next(cal.walk("VTIMEZONE"))
+    tz = cal.walk("VTIMEZONE")[0]
     names = {str(c["TZNAME"]) for c in tz.subcomponents}
     assert {"GMT", "BST"} <= names
 

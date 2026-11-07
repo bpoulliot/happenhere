@@ -17,7 +17,7 @@ from sqlalchemy.orm import joinedload
 from .. import auth as _auth
 from .. import digest as _digest
 from .. import oidc as _oidc
-from ..config import get_config, save_config_fields
+from ..config import Config, get_config, save_config_fields
 from ..db import get_session
 from ..ical_export import feed_rows, generate_ics
 from ..jobs import run_single_scraper
@@ -778,7 +778,7 @@ async def settings_save(
     digest_interval_days: int = Form(3),
     digest_time: str = Form("09:00"),
     digest_window_days: int = Form(14),
-    tz: str = Form("America/Chicago"),
+    tz: str = Form(Config.tz),
     ntfy_url: str = Form(""),
     ntfy_topic: str = Form("happenhere"),
     ticketmaster_api_key: str = Form(""),

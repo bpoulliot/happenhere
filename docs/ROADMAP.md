@@ -45,7 +45,7 @@ item that is not READY.
 | 14 | 1 | Configurable notification digest that never repeats an unchanged list | **DONE** |
 | 15 | 0 | A re-scraped event keeps its first start time: a changed time never reaches the feed or the digest | **DONE** |
 | 16 | 1 | Eventbrite: the regional scraper is against the site's terms; an API token or the partner program instead | **NEEDS DECISION** |
-| 17 | 0 | Hard-coded `America/Denver`: parsed times and the ICS feed ignore the configured timezone | **READY** |
+| 17 | 0 | Hard-coded `America/Denver`: parsed times and the ICS feed ignore the configured timezone | **DONE** |
 | 18 | 0 | Two same-title shows on one day in one batch abort the whole scrape run (UNIQUE, no rollback) | **DONE** |
 | 19 | 0 | Every `ical` and `spothopper` source fails: the generic scrapers have no `SOURCE_NAME` | **DONE** |
 | 20 | 0 | Orphaned Chromium processes are never reaped while uvicorn is PID 1 | **DONE** |
@@ -412,6 +412,8 @@ generic JSON-LD reader, which this item fixes:
    request, with a note telling the admin to add the venue's own site.
 4. No types for the five not-buildable platforms.
 
+**Time zones:** a Ticketmaster `dateTime` (UTC) is converted with `app.tz.tz_of()` (item 17), never a fixed zone.
+
 ### 13 — Local scraper plugins — DONE
 
 **Why:** some venues need a scraper written for their one site. That code is about a particular
@@ -615,7 +617,7 @@ scrape, crawl, or employ any automated means to extract data from the Sites"*. T
    `eventbrite_venue` type follows the `ticketmaster_venue` pattern in item 12.
 3. Apply to the partner program, or not?
 
-### 17 — Hard-coded `America/Denver` timezone — READY
+### 17 — Hard-coded `America/Denver` timezone — DONE
 
 **Found by item 12, not fixed there.** Four places convert or emit times in a fixed zone instead of
 the configured one:
@@ -631,6 +633,26 @@ returns the configured zone: `cfg.tz` through `tz_of` in `app/digest.py`, which 
 for an unknown zone. All five places use it. **Tests:** a synthetic JSON-LD event with a `+00:00` offset parses to
 local wall-clock time in a configured zone that is not UTC. The ICS `DTSTART` carries the configured
 `TZID`.
+
+**Done.** `app/tz.py` holds the one helper: `from app.tz import tz_of` returns a `ZoneInfo` for
+`Config.tz` (or, given a `Config`, that one), and `UTC` for an unknown or blank zone (`app.digest.tz_of`
+is the same function). Local plugins (item 13) that convert an offset-carrying time import that name.
+All five places use it: `_parse_dt` (`_html_base.py`), `_ical_base.py` (start and end),
+`ticketmaster.py` (the event time; the `startDateTime` bound is plain UTC and needs no zone),
+`ical_export.py` and the scheduler. `ical_export.py` now labels each `DTSTART`/`DTEND` and
+`X-WR-TIMEZONE` with the configured `TZID` and builds the `VTIMEZONE` from the tz database
+(`Timezone.from_tzinfo`) instead of a hand-written Mountain block, so the two cannot disagree. The
+scheduler takes `Config.tz`, which already reads the `TZ` environment variable. `grep -rn "America/" app/`
+now finds only the config default and the settings form's placeholder text. Stored times are still
+naive local wall-clock times; only the zone they are converted into changed, and a deployment whose
+zone was already the old fixed one gets the same `DTSTART` for every event.
+
+**Tests** (`tests/test_timezone.py`, zones `Asia/Tokyo` and `Europe/London`): first run on the old
+code, 19 failed and 3 passed (a `19:00+00:00` JSON-LD start parsed to `12:00` instead of the
+configured zone's time, and so on); on the fix, all pass. Mutant: the hard-coded zone put back in
+`_parse_dt` fails 5 (the four JSON-LD tests and the source-tree check). The tests cover JSON-LD, iCal
+(`Z` start and end), Ticketmaster (`dateTime` in UTC), the feed's `TZID`/`X-WR-TIMEZONE`/`VTIMEZONE`,
+a DST zone, byte-stable output and the unknown-zone fall-back to `UTC`.
 
 ### 18 — One source's duplicate batch aborts the whole scrape run — DONE
 
@@ -797,6 +819,7 @@ covering two cities needs two searches, which one ZIP setting cannot express.
 3. A window that still hits the cap at one day logs a warning and records it on the source
    (`last_error`), never silently.
 4. The key stays in config; item 21's redaction covers the request lines.
+5. Event times (`dateTime`, UTC) are converted with `app.tz.tz_of()` (item 17), never a fixed zone.
 
 **Tests:** saved-fixture pages through a mocked transport; the window split covers the range
 exactly once with no gap or overlap; a window over the cap is halved; a second source with

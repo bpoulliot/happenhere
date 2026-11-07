@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup
 
+from ..tz import tz_of
 from .base import DEFAULT_HEADERS, EventData
 
 log = logging.getLogger(__name__)
@@ -129,7 +129,7 @@ def _parse_dt(raw: str) -> datetime | None:
     try:
         dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         if dt.tzinfo is not None:
-            dt = dt.astimezone(ZoneInfo("America/Denver")).replace(tzinfo=None)
+            dt = dt.astimezone(tz_of()).replace(tzinfo=None)
         return dt
     except ValueError:
         pass
