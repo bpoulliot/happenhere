@@ -292,7 +292,8 @@ def app_env(monkeypatch, tmp_path):
 def _retire(title: str) -> None:
     with db.get_session() as s:
         s.execute(
-            text("UPDATE events SET retired_at = :t WHERE title = :x"), {"t": DAY, "x": title}
+            text("UPDATE events SET retired_at = :t WHERE title = :x"),
+            {"t": DAY.isoformat(" "), "x": title},
         )
         s.commit()
 

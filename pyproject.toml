@@ -23,6 +23,18 @@ target-version = ["py312"]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
 pythonpath = ["."]
+# Item 07: a deprecation fails the run. Starlette's and FastAPI's warning classes derive from
+# UserWarning, not DeprecationWarning, so they are named. Later entries win: the two ignores below
+# are the only upstream deprecations tolerated, each scoped to the module that raises it.
+filterwarnings = [
+    "error::DeprecationWarning",
+    "error::fastapi.exceptions.FastAPIDeprecationWarning",
+    "error::starlette.exceptions.StarletteDeprecationWarning",
+    # Starlette's TestClient and Authlib's httpx client both want the `httpx2` package; this
+    # project pins `httpx`. Re-check when ROADMAP 07 says to (dependency decision, not a test fix).
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning:fastapi.testclient",
+    "ignore:The httpx module is deprecated:DeprecationWarning:authlib",
+]
 
 [tool.bandit]
 exclude_dirs = ["tests", "app/web/static"]

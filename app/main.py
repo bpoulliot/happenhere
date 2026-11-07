@@ -7,7 +7,6 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI
-from fastapi.responses import ORJSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -135,7 +134,6 @@ app = FastAPI(
     title="HappenHere",
     version=_version,
     lifespan=lifespan,
-    default_response_class=ORJSONResponse,
 )
 
 app.add_middleware(_SecurityHeaders)

@@ -28,7 +28,7 @@ def feed_rows(
     now: datetime | None = None,
 ) -> list[EventRow]:
     """Upcoming events within the look-ahead, optionally only from some sources."""
-    now = now or datetime.utcnow()
+    now = now or datetime.now(UTC).replace(tzinfo=None)  # naive UTC, as utcnow() was
     q = shown_events(session, now, now + timedelta(days=lookahead_days))
     if source_ids is not None:
         q = q.filter(EventRow.source_id.in_(source_ids))
