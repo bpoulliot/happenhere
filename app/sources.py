@@ -10,7 +10,8 @@ with ``--disable-missing``. Every URL passes ``netguard``, as it does in the adm
 
 A *disabled* entry whose URL the guard refuses is not a refused file (item 24): it is stored
 disabled, the refusal in its ``last_error``, and the plan shows a warning. Enabling it, in the
-admin or by a later import, runs the guard again and is refused while it still fails.
+admin or by a later import, runs the guard again and is refused while it still fails. A regional
+``ticketmaster`` entry without a location in its URL is judged the same way (item 22).
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from sqlalchemy.orm import Session
 from . import logredact
 from .models import Source
 from .netguard import NonPublicURL, require_public_url
+from .scrapers import ticketmaster
 from .scrapers.registry import scraper_types
 
 log = logging.getLogger(__name__)
@@ -45,7 +47,8 @@ class ImportRefused(ValueError):
 # A ``last_error`` written by a failed import/admin check (not by a scraper) starts with one of
 # these marks, so a later pass can tell its own record from a scraper's and clear only its own.
 GUARD_REFUSAL_MARK = "url refused: "
-CHECK_ERROR_MARKS: tuple[str, ...] = (GUARD_REFUSAL_MARK,)
+LOCATION_MISSING_MARK = "location missing: "  # item 22: a regional Ticketmaster URL
+CHECK_ERROR_MARKS: tuple[str, ...] = (GUARD_REFUSAL_MARK, LOCATION_MISSING_MARK)
 
 
 def is_check_error(last_error: str | None) -> bool:
@@ -75,6 +78,16 @@ def check_source_url(url: str) -> None:
     """An empty URL is allowed (regional aggregators); anything else must be public http(s)."""
     if url:
         require_public_url(url)
+
+
+def location_refusal(stype: str, url: str) -> str | None:
+    """Fixed text when a source of this type cannot run from this URL (item 22), else None.
+
+    Only the regional ``ticketmaster`` type has such a rule: its URL carries its location.
+    """
+    if stype == "ticketmaster":
+        return ticketmaster.location_problem(url)
+    return None
 
 
 def split_categories(categories: str) -> list[str]:
@@ -155,6 +168,12 @@ def _validate_entry(raw: object, label: str) -> tuple[dict | None, list[str]]:
                 f"url refused: {exc} (must be http(s) and non-public hosts are refused)",
                 f"{GUARD_REFUSAL_MARK}{exc}",
             )
+        if refusal is None and isinstance(stype, str):
+            problem = location_refusal(stype, url)
+            if problem:
+                refusal = failed_check(
+                    enabled, label, errors, problem, f"{LOCATION_MISSING_MARK}{problem}"
+                )
 
     cats = raw.get("categories", [])
     cats = [] if cats is None else cats

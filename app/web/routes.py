@@ -31,8 +31,10 @@ from ..scrapers.registry import TYPE_LABELS, scraper_types
 from ..sources import (
     _TAG_RE,
     GUARD_REFUSAL_MARK,
+    LOCATION_MISSING_MARK,
     check_source_url,
     is_check_error,
+    location_refusal,
     source_tags,
     split_categories,
     split_tags,
@@ -633,6 +635,14 @@ def _refused_to_enable(refusal: NonPublicURL) -> PlainTextResponse:
     )
 
 
+def _check_error(refusal: NonPublicURL | None, scraper_type: str, url: str) -> str | None:
+    """The ``last_error`` a failed save check stores (item 24's guard, then item 22's location)."""
+    if refusal:
+        return f"{GUARD_REFUSAL_MARK}{refusal}"
+    problem = location_refusal(scraper_type, url)
+    return f"{LOCATION_MISSING_MARK}{problem}" if problem else None
+
+
 @router.post("/admin/sources")
 async def source_create(
     display_name: str = Form(...),
@@ -650,6 +660,9 @@ async def source_create(
     refusal = _url_refusal(url)
     if refusal and enabled == "on":
         return _refused_to_enable(refusal)
+    check_error = _check_error(refusal, scraper_type, url)
+    if check_error and enabled == "on":
+        return PlainTextResponse(location_refusal(scraper_type, url), status_code=400)
     cats = split_categories(categories)
     try:
         tag_list = split_tags(tags)
@@ -673,7 +686,7 @@ async def source_create(
             categories=json.dumps(cats),
             tags=json.dumps(tag_list),
             enabled=(enabled == "on"),
-            last_error=f"{GUARD_REFUSAL_MARK}{refusal}" if refusal else None,
+            last_error=check_error,
         )
         session.add(src)
         session.commit()
@@ -697,6 +710,9 @@ async def source_update(
     refusal = _url_refusal(url)
     if refusal and enabled == "on":
         return _refused_to_enable(refusal)
+    check_error = _check_error(refusal, scraper_type, url)
+    if check_error and enabled == "on":
+        return PlainTextResponse(location_refusal(scraper_type, url), status_code=400)
     cats = split_categories(categories)
     try:
         tag_list = split_tags(tags)
@@ -714,8 +730,8 @@ async def source_update(
             src.categories = json.dumps(cats)
             src.tags = json.dumps(tag_list)
             src.enabled = enabled == "on"
-            if refusal:  # stored disabled, the refusal as its last_error (a scraper's is kept)
-                src.last_error = f"{GUARD_REFUSAL_MARK}{refusal}"
+            if check_error:  # stored disabled, the refusal as its last_error (a scraper's is kept)
+                src.last_error = check_error
             elif is_check_error(src.last_error):
                 src.last_error = None
             session.commit()
@@ -743,6 +759,9 @@ async def toggle_source(source_name: str):
                 refusal = _url_refusal(src.url or "")
                 if refusal:
                     return _refused_to_enable(refusal)
+                problem = location_refusal(src.type or "", src.url or "")
+                if problem:
+                    return PlainTextResponse(problem, status_code=400)
                 if is_check_error(src.last_error):
                     src.last_error = None
             src.enabled = not src.enabled

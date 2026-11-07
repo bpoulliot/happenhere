@@ -46,7 +46,15 @@ def tm_run(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "_cfg", cfg)
     monkeypatch.setattr("app.jobs.get_config", lambda: cfg)
     with db.get_session() as s:
-        s.add(Source(name="tm", display_name="TM", type="ticketmaster", enabled=True))
+        s.add(
+            Source(
+                name="tm",
+                display_name="TM",
+                type="ticketmaster",
+                url="https://app.ticketmaster.com/discovery/v2/events?latlong=12.5,-45.25&radius=25",
+                enabled=True,
+            )
+        )
         s.commit()
 
     def handler(request: httpx.Request) -> httpx.Response:

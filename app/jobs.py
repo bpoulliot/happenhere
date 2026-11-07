@@ -30,7 +30,7 @@ def run_all_scrapers() -> None:
                 continue
             try:
                 events = scraper.scrape()
-                result = _store(session, src, events, seen)
+                result = _store(session, src, events, seen, scraper)
                 log.info("%s: %d new, %d updated, %d retired", src.name, *result)
             except Exception as exc:
                 # A failed flush leaves the session unusable until rolled back (item 18): without
@@ -64,7 +64,7 @@ def run_single_scraper(source_name: str) -> dict:
             return {"error": f"No scraper class for type '{src.type}'"}
         try:
             events = scraper.scrape()
-            new, updated, retired = _store(session, src, events, set())
+            new, updated, retired = _store(session, src, events, set(), scraper)
             log.info("%s: %d new, %d updated, %d retired", src.name, new, updated, retired)
             return {"new": new, "updated": updated, "retired": retired, "total": len(events)}
         except Exception as exc:
@@ -78,12 +78,18 @@ def run_single_scraper(source_name: str) -> dict:
             scraper.close()
 
 
-def _store(session, src: Source, events: list, seen: set[int]) -> tuple[int, int, int]:
+def _store(
+    session, src: Source, events: list, seen: set[int], scraper=None
+) -> tuple[int, int, int]:
     """Store one successful scrape of ``src``; returns (new, updated, retired).
 
     ``seen`` is the rows earlier sources returned in this run, and gains this scrape's. Only a
-    scrape with at least one event retires anything (item 25).
+    scrape with at least one event retires anything (item 25), and only one that read all it
+    meant to: a scraper that sets ``incomplete`` (item 22: an API cap or a request ceiling)
+    retires nothing, and its ``warnings`` become the source's ``last_error``.
     """
+    warnings = list(getattr(scraper, "warnings", None) or [])
+    complete = not getattr(scraper, "incomplete", False)
     started = datetime.now()
     src_cats = json.loads(src.categories or "[]")
     for ev in events:  # tag events with the source's categories if they have none
@@ -92,10 +98,10 @@ def _store(session, src: Source, events: list, seen: set[int]) -> tuple[int, int
     returned: set[int] = set()
     new, updated = upsert_events(session, events, src.id, returned=returned)
     seen |= returned
-    retired = retire_unreturned(session, src.id, seen, started) if events else 0
+    retired = retire_unreturned(session, src.id, seen, started) if events and complete else 0
     src.last_scraped = datetime.now()
     src.error_count = 0
-    src.last_error = None
+    src.last_error = redact("; ".join(warnings)) if warnings else None
     session.commit()
     return new, updated, retired
 

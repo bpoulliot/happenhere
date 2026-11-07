@@ -70,7 +70,7 @@
     </td>
     <td>{{ s.last_scraped }}</td>
     <td>
-      {% if s.error_count %}<span class="err-count" title="{{ s.last_error }}">⚠ {{ s.error_count }} err</span>{% elif s.guard_refused %}<span class="err-count" title="{{ s.last_error }}">⚠ URL refused</span>{% endif %}
+      {% if s.error_count %}<span class="err-count" title="{{ s.last_error }}">⚠ {{ s.error_count }} err</span>{% elif s.guard_refused %}<span class="err-count" title="{{ s.last_error }}">⚠ URL refused</span>{% elif s.last_error %}<span class="err-count" title="{{ s.last_error }}">⚠ warning</span>{% endif %}
       {% for c in s.canary %}<span class="err-count" data-canary="{{ c }}" title="{% if s.canary_pending %}alert pending{% else %}alerted {{ s.canary_alerted }}{% endif %}">⚠ canary: {{ 'no events' if c == 'empty' else 'failing' }}{% if s.canary_pending %} (alert pending){% endif %}</span>{% endfor %}
     </td>
     <td style="white-space:nowrap;display:flex;gap:.5rem;align-items:center">
