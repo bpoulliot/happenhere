@@ -23,7 +23,7 @@ item that is not READY.
   narrowest count) and the Docker build. `main` takes changes only through a PR with all of them
   green.
 
-**Next free item number: 22.** Always re-read it here before filing.
+**Next free item number: 26.** Always re-read it here before filing.
 
 ## Items
 
@@ -50,6 +50,10 @@ item that is not READY.
 | 19 | 0 | Every `ical` and `spothopper` source fails: the generic scrapers have no `SOURCE_NAME` | **DONE** |
 | 20 | 0 | Orphaned Chromium processes are never reaped while uvicorn is PID 1 | **DONE** |
 | 21 | 0 | Secrets in logs: request lines and error text carry API keys from query strings | **DONE** |
+| 22 | 1 | Ticketmaster regional search: `postalCode` ignores the radius; a real area search passes the 1,000-result cap | **NEEDS DECISION** |
+| 23 | 1 | JSON-LD: events listed under a `Place`'s capitalised `Events` key are missed by detection and the scraper | **READY** |
+| 24 | 1 | Import: a disabled entry whose URL fails the network guard refuses the whole file | **NEEDS DECISION** |
+| 25 | 0 | A same-title show first seen in a later run is folded into the earlier show's row | **NEEDS DECISION** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -709,3 +713,78 @@ CLI call it. `run_all_scrapers`/`run_single_scraper` store `redact(str(exc))` in
 *Not covered:* a secret in a request **header** never reaches a log line here (ntfy's token is a
 header; httpx does not log headers). A deployment upgrading from before this item still has old log
 lines and old `last_error` values with the key until the log rotates and the source scrapes again.
+
+### 22 — Ticketmaster regional search ignores the radius — NEEDS DECISION
+
+**Found in a deployment (2026-11-04).** The built-in `ticketmaster` type sends `postalCode` +
+`radius` to the Discovery API. Measured: with `postalCode` the API returns only events at venues
+**in that ZIP** and ignores `radius` (one ZIP at 1, 25 and 75 miles: the same 81 events each; a
+ZIP with no venue: 0 at any radius), so `city_radius_miles` does nothing. A real area search
+(`latlong` + `radius`) works, but a 25-mile metro search returned 1,822 events, over the API's
+paging cap of 1,000 results (`size` × `page` < 1000), so it silently loses the tail. A deployment
+covering two cities needs two searches, which one ZIP setting cannot express.
+
+**Decision needed (owner):**
+1. (a) Rebuild the regional type on `latlong` + `radius` (a geocoded point in config) and page
+   past the cap by splitting the date range into windows that each stay under 1,000; (b) make
+   the location per source (its URL carries `latlong`/`radius` or `postalCode`), so a deployment
+   adds one regional source per area; (c) drop the regional type in favour of item 12's
+   per-venue `ticketmaster_venue` type and document why. *Recommended: (b), with (a)'s date
+   windows, since one config value cannot cover several areas.*
+2. Whatever is chosen: a source that hits the cap logs it and records it on the source, never
+   silently.
+
+**Tests (once decided):** saved-fixture pages; the cap split covers every page exactly once; a
+second area in a second source does not change the first.
+
+### 23 — JSON-LD events under a `Place`'s `Events` key — READY
+
+**Found in a deployment (2026-11-04).** A ticketing platform (Seat Engine) publishes one JSON-LD
+`Place` whose capitalised `Events` key lists every event. `extract_jsonld_events`
+(`app/scrapers/_html_base.py`) reads top-level items and `@graph` only, so URL detection reports no
+events and the `jsonld` scraper returns 0; the deployment works around it with a private plugin.
+This is item 12's gap G2 (`Place.event`) with one more key spelling. **Spec:** when an item is a
+`Place` (or a subtype), take the events under `event`, `events` and `Events` (a list or a single
+object), each kept only if it is an Event type (item 12's G1 subtypes included), de-duplicated
+with top-level events; whichever of items 12 and 23 runs first does both spellings, and the other
+records that. **Tests:** synthetic fixtures for each key spelling, a single object and a list;
+detection reports the type `jsonld` and the count; a page with the same event both top-level and
+nested yields it once.
+
+### 24 — Import: a disabled entry with a refused URL refuses the whole file — NEEDS DECISION
+
+**Found in a deployment (2026-11-04).** `python -m app.sources import` checks every entry's URL
+through `netguard`, enabled or not, and one refusal refuses the file (item 05's rule). A source
+kept disabled *because* its host does not resolve publicly from the deployment (a DNS filter, a
+dead domain) cannot be written down in the file at all, so its blocker is kept as a comment
+instead, out of the import's reach. (Item 05's other import finding from the same run, `tags`
+reading as a change on every import, is gone since item 03 stored tags: the same file now imports
+as 91 unchanged.)
+
+**Decision needed (owner):** (a) keep the rule (a refused URL is never stored), document the
+comment workaround; (b) a **disabled** entry whose URL is refused is stored disabled with the
+refusal as its `last_error` and a warning in the plan, and enabling it (admin form or a later
+import) re-runs the check and refuses there; (c) skip the check for disabled entries without
+recording anything. *Recommended: (b): the file stays the whole truth, and nothing unchecked is
+ever fetched.* **Tests (once decided):** the chosen behaviour for a disabled and an enabled entry
+with a refused URL; enabling it later re-checks.
+
+### 25 — A same-title show first seen in a later run folds into the earlier show — NEEDS DECISION
+
+**Found by item 18, left there.** Item 18 keeps two same-title shows of one day apart **within one
+batch** (different identity keys → the second gets `timed_hash`). If the late show appears only in
+a **later** run (added after the early show was stored), `upsert_events` finds no row by its
+identity key, then finds the early show's row by dedup hash (title + date + venue) and refreshes
+it: the late show never gets a row, and the early row takes the late show's title and URL (its
+start time stays, item 15). A show added later in the week at a comedy club is exactly this.
+
+**Decision needed (owner):** on the dedup-hash match, when the stored row is from the **same
+source** and carries a **different, non-null identity key**, (a) treat it as a different event
+and store the new one under `timed_hash` (risk: a source that changes an event's URL leaves the
+old row as a ghost until its date passes), or (b) as (a), and also retire a same-source row that
+a later full scrape no longer returns (needs "seen in this run" tracking; overlaps item 15's
+hash-fallback match), or (c) keep merging. *Recommended: (b); (a) alone if (b) waits on item 15.*
+Cross-source matches (the same event from two sources) keep merging either way.
+
+**Tests (once decided):** run 1 stores the early show; run 2 returns early + late: two rows, the
+early row unchanged; a changed URL for the same event under the chosen rule.
