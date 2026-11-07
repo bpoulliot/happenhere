@@ -106,7 +106,13 @@ event, with copy, `webcal://` and Google Calendar links. Each calendar is named 
 matched first on its identity key: the source's own event id (`source_uid`), else its own URL (not the
 listing page), else start time + venue; the title is never part of it. Two events in one scrape with
 the same key fall back to the dedup hash (title + date + venue). `events.uid` is set once at insert;
-rows stored before item 03 keep their old `<dedup_hash>@peakevents` UID.
+rows stored before item 03 keep their old `<dedup_hash>@peakevents` UID. A dedup-hash match is a
+different event when `is_different_event` says so (same source, different non-null key: item 25).
+
+**Retired rows are never shown** (item 25): a successful scrape with at least one event retires the
+source's upcoming rows it did not return (`events.retired_at`; nothing is deleted), and a row
+returned again is un-retired with its UID. Query events for a reader only through
+`app/models.py` `shown_events()`; a test refuses a `start_dt` filter anywhere else in `app/`.
 
 ## Deployment
 
