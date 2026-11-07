@@ -1,5 +1,9 @@
 """Auto-detect the best scraper for a given URL.
 
+Before any request, the URL's host is checked (item 12): a ticketing platform that cannot be
+a source gets a note saying so, and a Ticketmaster venue URL is a ``ticketmaster_venue``
+source (a venue page is resolved through the Discovery API, never fetched).
+
 Detection pipeline (stops at first successful strategy):
   1. httpx fetch → try JSON-LD, iCal probe, SpotHopper, Squarespace
   2. cloudscraper fetch (Cloudflare bypass) → same checks
@@ -11,6 +15,7 @@ Returns a DetectionResult describing the scraper type and a preview of events.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
@@ -18,6 +23,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from .netguard import NonPublicURL, httpx_request_hook, require_public_url
+from .scrapers import ticketmaster_venue
 from .scrapers._html_base import (
     DEFAULT_HEADERS,
     extract_jsonld_events,
@@ -45,6 +51,43 @@ _SPOTHOPPER_SELECTORS = [".calendar-day-event", ".event-text-holder"]
 _SQUARESPACE_SELECTOR = ".eventlist-event"
 
 
+# Ticketing platforms with no path a self-hosted deployment may use: partner-only or
+# artist-only APIs, terms that forbid automated reading, or a bot wall
+# (docs/measurements/12-ticketing-platforms.md). Host suffix -> platform name.
+_NOT_A_SOURCE: dict[str, str] = {
+    "dice.fm": "DICE",
+    "bandsintown.com": "Bandsintown",
+    "axs.com": "AXS",
+    "seetickets.com": "See Tickets",
+    "seetickets.us": "See Tickets",
+    "eventim.us": "See Tickets",
+    "etix.com": "Etix",
+}
+# Eventbrite runs one site per country (eventbrite.com, .co.uk, .com.au, ...): item 16 decides.
+_EVENTBRITE_RE = re.compile(r"(?:^|\.)eventbrite\.(?:com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})$")
+
+
+def platform_note(url: str) -> str | None:
+    """The note for a URL on a ticketing platform that cannot be a source, else ``None``.
+
+    Decided from the host alone: no request is made.
+    """
+    host = (urlparse(url or "").hostname or "").lower().rstrip(".")
+    name = None
+    for suffix, platform in _NOT_A_SOURCE.items():
+        if host == suffix or host.endswith("." + suffix):
+            name = platform
+            break
+    if name is None and _EVENTBRITE_RE.search(host):
+        name = "Eventbrite"
+    if name is None:
+        return None
+    return (
+        f"{name}: this platform's terms (or bot wall) do not allow automated reading, so it "
+        "cannot be a source. Add the venue's own website instead."
+    )
+
+
 @dataclass
 class DetectionResult:
     scraper_type: (
@@ -63,6 +106,13 @@ def detect(url: str, config=None) -> DetectionResult:
     Pass `config` to enable the Playwright fallback.
     """
     notes: list[str] = []
+
+    # Recognised by host, before any request (item 12).
+    note = platform_note(url)
+    if note:
+        return DetectionResult(None, url, None, [], [note], False)
+    if ticketmaster_venue.is_venue_url(url):
+        return _detect_ticketmaster_venue(url, config, notes)
 
     try:
         require_public_url(url)
@@ -117,6 +167,25 @@ def detect(url: str, config=None) -> DetectionResult:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _detect_ticketmaster_venue(url: str, config, notes: list[str]) -> DetectionResult:
+    """A Ticketmaster venue URL: the Discovery URL to store, without fetching ticketmaster.com."""
+    key = getattr(config, "ticketmaster_api_key", "") if config is not None else ""
+    try:
+        stored = ticketmaster_venue.resolve_venue_url(url, key)
+    except ticketmaster_venue.VenueNotFound as exc:
+        notes.append(f"Ticketmaster venue: {exc}")
+        return DetectionResult(None, url, None, [], notes, False)
+    except httpx.HTTPError as exc:
+        log.warning("Ticketmaster venue lookup failed: %s", exc)
+        notes.append(
+            "Ticketmaster venue lookup failed: check TICKETMASTER_API_KEY, or paste the "
+            "Discovery URL with the venueId."
+        )
+        return DetectionResult(None, url, None, [], notes, False)
+    notes.append(f"Ticketmaster venue: events come from the Discovery API ({stored})")
+    return DetectionResult("ticketmaster_venue", stored, None, [], notes, True)
 
 
 def _fetch_soup(url: str, use_cloudscraper: bool) -> tuple[BeautifulSoup | None, str]:

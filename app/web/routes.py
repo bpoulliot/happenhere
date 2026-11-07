@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
+import httpx
 from fastapi import APIRouter, Form, Query, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -24,6 +25,7 @@ from ..jobs import run_single_scraper
 from ..models import Event, Source, shown_events
 from ..netguard import NonPublicURL
 from ..plugins import get_report as get_plugin_report
+from ..scrapers import ticketmaster_venue
 from ..scrapers.registry import TYPE_LABELS, scraper_types
 from ..sources import _TAG_RE, check_source_url, source_tags, split_categories, split_tags
 
@@ -580,6 +582,22 @@ async def detect_source(url: str = Form(...)):
     }
 
 
+def _ticketmaster_venue_url(url: str) -> tuple[str, PlainTextResponse | None]:
+    """The Discovery URL to store for a ``ticketmaster_venue`` source (item 12), resolved once
+    here so a scrape never searches; or the admin's 400 when it cannot be resolved."""
+    try:
+        return ticketmaster_venue.resolve_venue_url(url, get_config().ticketmaster_api_key), None
+    except ticketmaster_venue.VenueNotFound as exc:
+        return url, PlainTextResponse(str(exc), status_code=400)
+    except httpx.HTTPError:
+        log.warning("Ticketmaster venue lookup failed", exc_info=True)
+        return url, PlainTextResponse(
+            "Ticketmaster venue lookup failed: check TICKETMASTER_API_KEY, or paste the "
+            "Discovery URL with the venueId.",
+            status_code=400,
+        )
+
+
 @router.post("/admin/sources")
 async def source_create(
     display_name: str = Form(...),
@@ -590,6 +608,10 @@ async def source_create(
     enabled: str = Form("off"),
 ):
     name = _slugify(display_name)
+    if scraper_type == "ticketmaster_venue":
+        url, refused = _ticketmaster_venue_url(url)
+        if refused:
+            return refused
     try:
         check_source_url(url)
     except NonPublicURL:
@@ -637,6 +659,10 @@ async def source_update(
     tags: str = Form(""),
     enabled: str = Form("off"),
 ):
+    if scraper_type == "ticketmaster_venue":
+        url, refused = _ticketmaster_venue_url(url)
+        if refused:
+            return refused
     try:
         check_source_url(url)
     except NonPublicURL:

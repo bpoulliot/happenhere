@@ -75,7 +75,9 @@ def test_a_discovery_url_is_detected_without_a_request(no_network):
     url = "https://app.ticketmaster.com/discovery/v2/events?venueId=KovZA1,Z7rB2&apikey=x"
     res = discovery.detect(url, config=Config(ticketmaster_api_key="k"))
     assert res.success and res.scraper_type == "ticketmaster_venue"
-    assert res.detected_url == "https://app.ticketmaster.com/discovery/v2/events?venueId=KovZA1,Z7rB2"
+    assert (
+        res.detected_url == "https://app.ticketmaster.com/discovery/v2/events?venueId=KovZA1,Z7rB2"
+    )
     assert no_network == []
 
 
@@ -100,7 +102,8 @@ def test_an_unresolved_venue_page_says_what_to_paste(monkeypatch, no_network):
 
     monkeypatch.setattr(ticketmaster_venue, "resolve_venue_url", resolve)
     res = discovery.detect(
-        "https://www.ticketmaster.com/synthetic-hall/venue/1", config=Config(ticketmaster_api_key="k")
+        "https://www.ticketmaster.com/synthetic-hall/venue/1",
+        config=Config(ticketmaster_api_key="k"),
     )
     assert not res.success and "venueId" in " ".join(res.notes)
 
@@ -152,7 +155,9 @@ def test_saving_a_venue_page_stores_the_resolved_discovery_url(admin, monkeypatc
     from app.models import Source
 
     monkeypatch.setattr(
-        ticketmaster_venue, "resolve_venue_url", lambda url, key: "https://app.ticketmaster.com/discovery/v2/events?venueId=KovZB"
+        ticketmaster_venue,
+        "resolve_venue_url",
+        lambda url, key: "https://app.ticketmaster.com/discovery/v2/events?venueId=KovZB",
     )
     _, client = admin
     with client as http:
@@ -172,7 +177,8 @@ def test_saving_an_unresolved_venue_page_is_refused_with_the_message(admin, monk
     with client as http:
         r = http.post("/admin/sources", data=_form("https://www.ticketmaster.com/x/venue/1"))
         u = http.post(
-            "/admin/sources/synthetic_hall/update", data=_form("https://www.ticketmaster.com/x/venue/1")
+            "/admin/sources/synthetic_hall/update",
+            data=_form("https://www.ticketmaster.com/x/venue/1"),
         )
     assert r.status_code == 400 and "venueId" in r.text
     assert u.status_code == 400 and "venueId" in u.text
