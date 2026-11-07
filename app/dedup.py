@@ -46,32 +46,62 @@ def identity(ev: EventData, source: Source | None) -> tuple[str, str]:
 
 
 def identity_key(ev: EventData, source: Source | None) -> str:
-    kind, value = identity(ev, source)
+    return _key(source, *identity(ev, source))
+
+
+def _key(source: Source | None, kind: str, value: str) -> str:
     name = source.name if source else ""
     return hashlib.sha256(f"{name}\x1f{kind}\x1f{value}".encode()).hexdigest()
 
 
-def is_different_event(
-    row: Event, key: str | None, source_id: int, batch_keys: frozenset[str]
-) -> bool:
-    """Whether a scraped event that matched ``row`` on the dedup hash (title + date + venue) is
-    a different event after all, and gets a row of its own under ``timed_hash`` (item 25).
+def _is_slot_key(key: str | None, start: datetime, venue: str | None, source: Source | None) -> bool:
+    """Whether ``key`` is the ``slot`` identity (start time + venue) of this start and venue."""
+    return key is not None and key == _key(source, "slot", f"{start.isoformat()}|{_norm(venue)}")
 
-    It is when the stored row comes from the **same source** and carries a **different,
-    non-null identity key**: a second show of one title, day and venue, first listed in a later
-    run. The same event from another source keeps merging, and so does an event or a row with
-    no identity key (a key shared within its batch, a row from before item 03).
 
-    ``batch_keys`` is every identity key this batch returned (shared ones excluded). Item 25
-    does not read it; item 15 is to: a stored key that is *not* in it means the source stopped
-    listing that row, so the match may be the same event whose time moved within the day.
+DIFFERENT, MOVED, SAME = "different", "moved", "same"
+
+
+def hash_match(
+    row: Event,
+    ev: EventData,
+    key: str | None,
+    source: Source | None,
+    batch_keys: frozenset[str],
+) -> str:
+    """What a scraped event that matched ``row`` on the dedup hash (title + date + venue) is.
+
+    * ``DIFFERENT`` (item 25): the stored row comes from the **same source** and carries a
+      **different, non-null identity key** that this batch also returned: a second show of one
+      title, day and venue (the early show is still listed). It gets a row of its own under
+      ``timed_hash``.
+    * ``MOVED`` (item 15): the same event, whose start time moved within the day. Either both
+      keys are ``slot`` keys (start time + venue, the only kind that changes with the time) and
+      the stored key is **not** in ``batch_keys`` (nothing in this batch matched the stored row
+      on its own key), or neither side has a usable key (hash fallback) and the row is the same
+      source's. The row is updated in place and keeps its UID.
+    * ``SAME``: everything else merges as before, keeping the stored start time: the same event
+      from another source (whose time a second source must not move), and a same-source match
+      where only one side has a key.
+
+    A ``url`` or ``uid`` key does not change when an event's time moves, so a different one is
+    the source saying "another event" (item 25), listed alongside or not.
+
+    ``batch_keys`` is every identity key this batch returned (keys shared within it excluded).
     """
-    return (
-        row.source_id == source_id
-        and key is not None
-        and row.identity_key is not None
-        and row.identity_key != key
-    )
+    if source is None or row.source_id != source.id:
+        return SAME
+    if key is None and row.identity_key is None:
+        return MOVED
+    if key is None or row.identity_key is None or row.identity_key == key:
+        return SAME
+    if (
+        row.identity_key not in batch_keys
+        and _is_slot_key(key, ev.start_dt, ev.venue_name, source)
+        and _is_slot_key(row.identity_key, row.start_dt, row.venue_name, source)
+    ):
+        return MOVED
+    return DIFFERENT
 
 
 def upsert_events(
@@ -96,8 +126,10 @@ def upsert_events(
     differ: the second is stored under ``timed_hash`` (the hash plus the start time). The batch
     is tracked here because the session does not autoflush, so a query cannot see it.
 
-    A dedup-hash match with a stored row that ``is_different_event`` says is another event is
-    stored under ``timed_hash`` too (item 25: the late show first seen in a later run).
+    A dedup-hash match with a stored row that ``hash_match`` says is another event is stored
+    under ``timed_hash`` too (item 25: the late show first seen in a later run); one it says is
+    the same event moved within the day takes the new start time and keeps its row and UID
+    (item 15).
     """
     source = session.get(Source, source_id)
     keys = [identity_key(ev, source) for ev in events]
@@ -117,8 +149,7 @@ def upsert_events(
             row = session.query(Event).filter_by(identity_key=key).first()
         if row is not None:
             _refresh(row, ev)
-            # The source says this is the same event, so its time and venue are current too
-            # (a dedup-hash match still keeps its first start time: item 15).
+            # The source says this is the same event, so its time and venue are current too.
             row.start_dt = ev.start_dt
             row.venue_name = ev.venue_name or row.venue_name
             if row.dedup_hash != h and h not in taken_hashes and not _hash_used(session, h):
@@ -144,7 +175,8 @@ def upsert_events(
                 continue
 
         row = session.query(Event).filter_by(dedup_hash=h).first()
-        if row is not None and is_different_event(row, key, source_id, batch_keys):
+        match = hash_match(row, ev, key, source, batch_keys) if row is not None else None
+        if match == DIFFERENT:
             h = timed_hash(ev)  # stored in an earlier run: the same rule as within a batch
             if h in batch:
                 _refresh(batch[h][0], ev)
@@ -175,7 +207,12 @@ def upsert_events(
             new_count += 1
         else:
             _refresh(row, ev)
-            if row.identity_key is None and key and not _key_used(session, key):
+            if match == MOVED:  # the same event, its time moved within the day (item 15)
+                row.start_dt = ev.start_dt
+                row.venue_name = ev.venue_name or row.venue_name
+                if key and not _key_used(session, key):
+                    row.identity_key = key  # the uid stays: the feed UID must not move
+            elif row.identity_key is None and key and not _key_used(session, key):
                 row.identity_key = key  # a row from before item 03, or from another source
             updated_count += 1
         taken_hashes.add(h)
