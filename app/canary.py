@@ -60,9 +60,8 @@ def conditions(src: Source) -> list[str]:
 
 def _count_run(session, src: Source, now: datetime) -> None:
     """Fold one finished run into ``src``'s streaks and re-arm it if it is no longer tripped."""
-    if (
-        not src.enabled
-    ):  # a disabled source is never counted, and a stale streak must not carry over
+    if not src.enabled:
+        # Never counted, and a stale streak must not carry over to when it is enabled again.
         src.empty_runs = src.error_runs = 0
         src.canary_alerted_at = None
         return
