@@ -86,6 +86,16 @@ def test_nested_under_a_graph_item(key):
     assert _names(extract_jsonld_events(_page(graph))) == ["Synthetic Show 1"]
 
 
+@pytest.mark.parametrize(
+    "container", ["MusicVenue", "EventVenue", "LocalBusiness", ["Place", "Thing"]]
+)
+def test_nested_under_a_place_subtype(container):
+    """Item 23: the container is any top-level item, so a ``Place`` subtype (or a list-valued
+    ``@type``) lists its events like a plain ``Place`` does, and is not itself an event."""
+    place = {"@type": container, "name": "Synthetic Hall", "Events": [_ev(5, "EducationEvent")]}
+    assert _names(extract_jsonld_events(_page(place))) == ["Synthetic Show 5"]
+
+
 def test_nested_under_a_top_level_list_item():
     data = [{"@type": "Place", "name": "Synthetic Hall", "Events": [_ev(4)]}]
     assert _names(extract_jsonld_events(_page(data))) == ["Synthetic Show 4"]
