@@ -6,6 +6,7 @@ import random
 import time
 from datetime import datetime
 
+from . import canary
 from .config import get_config
 from .db import get_session
 from .dedup import retire_unreturned, upsert_events
@@ -44,6 +45,10 @@ def run_all_scrapers() -> None:
             if getattr(scraper, "SOURCE_TYPE", "") in ("playwright", "playwright_jsonld"):
                 time.sleep(random.uniform(2, 8))
 
+    try:
+        canary.check()
+    except Exception:  # an alerting fault must never cost the run its image backfill
+        log.exception("canary check failed")
     _backfill_pexels_images()
     log.info("Scrape run complete")
 
