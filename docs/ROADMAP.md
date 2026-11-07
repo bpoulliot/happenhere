@@ -35,7 +35,7 @@ item that is not READY.
 | 04 | 1 | Personal feeds behind a long random token; an "artists I listen to" feed | **NEEDS MEASUREMENT** |
 | 05 | 1 | Idempotent source import/export from a YAML file | **DONE** |
 | 06 | 2 | Per-source canary: a source that returns zero events or keeps failing raises one alert | **READY** |
-| 07 | 0 | Deprecations that will break: `datetime.utcnow()`, `ORJSONResponse`, authlib/Starlette on `httpx` | **READY** |
+| 07 | 0 | Deprecations that will break: `datetime.utcnow()`, `ORJSONResponse`, authlib/Starlette on `httpx` | **DONE** |
 | 08 | 2 | Release workflow without a personal access token, compatible with a PR-only `main` | **NEEDS DECISION** |
 | 09 | 0 | Dependency bumps, low risk: CI actions and patch-level libraries (Dependabot) | **DONE** |
 | 10 | 0 | Web-framework bump: FastAPI and uvicorn (Starlette moves with them) | **DONE** |
@@ -211,12 +211,47 @@ After each scrape run, a source with zero upcoming events for two consecutive ru
 non-zero `error_count` for three, raises one notification (the existing ntfy settings) naming it;
 it re-arms when the source recovers. Shown in the admin source list too. Tests with a fake clock.
 
-### 07 — Deprecations — READY
+### 07 — Deprecations — DONE
 
 `datetime.utcnow()` (Python 3.12 deprecation; use aware UTC), `ORJSONResponse` (FastAPI
 deprecation; drop the custom default response class, keep behaviour), and the authlib/Starlette
 test-client warnings about `httpx` (pin-compatible fix or a tracked note if upstream has no
 replacement yet). The test run must show no `DeprecationWarning` from this package.
+
+**Findings.** `pytest -q tests/ -W default` on `main` (250 tests) gave 29 warnings, by origin:
+
+| Warning | Origin | Count | Fix |
+|---|---|---|---|
+| `DeprecationWarning: datetime.utcnow()` | `app/ical_export.py` `feed_rows` (the only `utcnow` in `app/`) | 21 | `datetime.now(UTC).replace(tzinfo=None)`: still naive UTC, the value the column comparison always saw |
+| `FastAPIDeprecationWarning: ORJSONResponse` | `app/main.py` default response class | 2 | dropped; `orjson` also dropped from `requirements.txt` (nothing else imports it) |
+| `DeprecationWarning: default datetime adapter` (sqlite3) | `tests/test_retire.py` `_retire` bound a `datetime` into raw `text()` SQL | 4 | the test binds `DAY.isoformat(" ")`, the text the old adapter wrote |
+| `StarletteDeprecationWarning: httpx with starlette.testclient` | upstream, `fastapi/testclient.py` import | 1 | scoped ignore (below) |
+| `AuthlibDeprecationWarning: httpx module` | upstream, `authlib/integrations/httpx_client/_compat.py` | 1 | scoped ignore (below) |
+
+After: `pytest -q tests/` prints **255 passed, no warnings** (250 + 5 new in `tests/test_deprecations.py`).
+
+* **Behaviour pinned first** (`tests/test_deprecations.py`, committed before the fix and green on the old code):
+  `/api/events` status, `application/json`, key set and order of the body and of each event, UTF-8 (not
+  `\u` escapes) and compact separators, byte-equal to `json.dumps(..., ensure_ascii=False, separators=(",", ":"))`;
+  `feed_rows`' default clock is naive and equals naive UTC; `last_scraped` and `NotificationLog.sent_at` round-trip
+  naive. Every other stored timestamp in `app/` is `datetime.now()` (naive local), which is not deprecated and was
+  not touched.
+* **The gate** is `filterwarnings` in `pyproject.toml`: `error` for `DeprecationWarning`, and for FastAPI's and
+  Starlette's own warning classes, which derive from `UserWarning` (a plain `error::DeprecationWarning:app` would not
+  have caught the `ORJSONResponse` one, which FastAPI raises from its own frames). Two scoped `ignore` entries for the
+  `httpx` notices; anything else from a dependency now fails the run, so a dependency bump that adds a deprecation
+  is visible in its own PR. `tests/test_deprecations.py` runs a throwaway test through the same configuration in
+  both directions (a deprecation raised from an `app.*` module fails, a clean test passes).
+* **Mutants** (run against the real suite): `datetime.utcnow()` back in `feed_rows` made 15 of 25 tests in
+  `test_feeds.py` fail with the `DeprecationWarning`; `default_response_class=ORJSONResponse` back in `main.py` failed
+  `test_retire.py`/`test_smoke.py` with `FastAPIDeprecationWarning`.
+* **Upstream `httpx`.** Starlette 1.10's `TestClient` and Authlib 1.9's httpx client both want the **`httpx2`**
+  package and fall back to `httpx` with a warning. Moving to it means swapping a pinned runtime dependency
+  (`httpx==0.28.1`, which `app/` also uses), not a pin-compatible fix, so it is **not done here**; the two warnings are
+  ignored by message and module. Authlib installs `simplefilter("always", AuthlibDeprecationWarning)` on import, which
+  overrides ini filters, so `tests/conftest.py` imports `authlib.deprecate` first. **Re-check** when Starlette or
+  Authlib drops the `httpx` fallback (the first `import` error will say so) or when a dependency decision on
+  `httpx2` is made; then delete both `ignore` lines and `tests/conftest.py`.
 
 ### 08 — Release workflow — NEEDS DECISION
 
