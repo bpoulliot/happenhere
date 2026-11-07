@@ -96,7 +96,12 @@ def test_runs_one_to_four(run):
     _add_source("club", CLUB)
 
     # Run 1: only the early show is listed.
-    assert _scrape("club", [_show(EARLY, EARLY_URL)]) == {"new": 1, "updated": 0, "total": 1}
+    assert _scrape("club", [_show(EARLY, EARLY_URL)]) == {
+        "new": 1,
+        "updated": 0,
+        "retired": 0,
+        "total": 1,
+    }
     first = _rows()
     assert list(first) == [EARLY_URL]
 
@@ -150,7 +155,7 @@ def test_a_failed_scrape_retires_nothing(run):
 def test_a_zero_event_scrape_retires_nothing(run):
     _add_source("club", CLUB)
     _scrape("club", [_show(EARLY, EARLY_URL), _show(LATE, LATE_URL)])
-    assert _scrape("club", []) == {"new": 0, "updated": 0, "total": 0}
+    assert _scrape("club", []) == {"new": 0, "updated": 0, "retired": 0, "total": 0}
     assert not any(r["retired"] for r in _rows().values())
 
 
@@ -286,7 +291,9 @@ def app_env(monkeypatch, tmp_path):
 
 def _retire(title: str) -> None:
     with db.get_session() as s:
-        s.execute(text("UPDATE events SET retired_at = :t WHERE title = :x"), {"t": DAY, "x": title})
+        s.execute(
+            text("UPDATE events SET retired_at = :t WHERE title = :x"), {"t": DAY, "x": title}
+        )
         s.commit()
 
 
@@ -295,7 +302,9 @@ def _client():
 
 
 def _feed_titles(content: bytes) -> list[str]:
-    return sorted(str(c["SUMMARY"]) for c in Calendar.from_ical(content).walk() if c.name == "VEVENT")
+    return sorted(
+        str(c["SUMMARY"]) for c in Calendar.from_ical(content).walk() if c.name == "VEVENT"
+    )
 
 
 def test_the_feeds_skip_a_retired_row(app_env):

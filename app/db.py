@@ -64,9 +64,11 @@ def _migrate_schema(engine) -> None:
             "raw_data": "TEXT",
             "identity_key": "VARCHAR(64)",
             "uid": "VARCHAR",
+            "retired_at": "DATETIME",
         }.items():
             if col not in event_cols:
                 conn.execute(text(f"ALTER TABLE events ADD COLUMN {col} {typ}"))
+                log.info("Schema: added events.%s", col)
         for col in ("identity_key", "uid"):
             conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_events_{col} ON events ({col})"))
 
@@ -79,6 +81,7 @@ def _migrate_schema(engine) -> None:
         }.items():
             if col not in source_cols:
                 conn.execute(text(f"ALTER TABLE sources ADD COLUMN {col} {typ}"))
+                log.info("Schema: added sources.%s", col)
 
         conn.commit()
 

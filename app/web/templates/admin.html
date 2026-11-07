@@ -14,7 +14,7 @@
   {% if scrape_result.error %}
   <div class="alert alert-error">{{ scrape_source }}: {{ scrape_result.error }}</div>
   {% else %}
-  <div class="alert alert-ok">{{ scrape_source }}: {{ scrape_result.new }} new, {{ scrape_result.updated }} updated ({{ scrape_result.total }} total)</div>
+  <div class="alert alert-ok">{{ scrape_source }}: {{ scrape_result.new }} new, {{ scrape_result.updated }} updated, {{ scrape_result.retired|default(0) }} retired ({{ scrape_result.total }} total)</div>
   {% endif %}
 {% endif %}
 
