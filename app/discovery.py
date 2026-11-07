@@ -175,7 +175,7 @@ def _detect_ticketmaster_venue(url: str, config, notes: list[str]) -> DetectionR
     try:
         stored = ticketmaster_venue.resolve_venue_url(url, key)
     except ticketmaster_venue.VenueNotFound as exc:
-        notes.append(f"Ticketmaster venue: {exc}")
+        notes.append(f"Ticketmaster venue: {exc.message}")
         return DetectionResult(None, url, None, [], notes, False)
     except httpx.HTTPError as exc:
         log.warning("Ticketmaster venue lookup failed: %s", exc)

@@ -588,7 +588,8 @@ def _ticketmaster_venue_url(url: str) -> tuple[str, PlainTextResponse | None]:
     try:
         return ticketmaster_venue.resolve_venue_url(url, get_config().ticketmaster_api_key), None
     except ticketmaster_venue.VenueNotFound as exc:
-        return url, PlainTextResponse(str(exc), status_code=400)
+        reason = exc.reason if exc.reason in ticketmaster_venue.MESSAGES else "not_a_venue_url"
+        return url, PlainTextResponse(ticketmaster_venue.MESSAGES[reason], status_code=400)
     except httpx.HTTPError:
         log.warning("Ticketmaster venue lookup failed", exc_info=True)
         return url, PlainTextResponse(

@@ -33,8 +33,36 @@ _ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _VENUE_PATH_RE = re.compile(r"^/(?P<slug>[^/]+)/venue/(?P<n>\d+)/?$")
 
 
+# What the admin is told when a pasted URL cannot be resolved. Fixed text, keyed by reason, so
+# no exception text reaches a response.
+NOT_A_VENUE_URL, NO_KEY, NO_MATCH = "not_a_venue_url", "no_key", "no_match"
+MESSAGES = {
+    NOT_A_VENUE_URL: (
+        "Not a Ticketmaster venue URL: paste a Discovery URL "
+        "(https://app.ticketmaster.com/discovery/v2/events?venueId=<id>) "
+        "or a ticketmaster.com /venue/<number> page."
+    ),
+    NO_KEY: (
+        "TICKETMASTER_API_KEY is not set: it is needed to look up a venue page. Set it, "
+        "or paste the Discovery URL with the venueId."
+    ),
+    NO_MATCH: (
+        "No Ticketmaster venue matched this venue page: find the venue's Discovery id and paste "
+        "https://app.ticketmaster.com/discovery/v2/events?venueId=<id>"
+    ),
+}
+
+
 class VenueNotFound(ValueError):
-    """A ticketmaster.com venue page that could not be resolved; the text is for the admin."""
+    """A pasted URL that could not be resolved; ``reason`` keys its admin text in ``MESSAGES``."""
+
+    def __init__(self, reason: str):
+        super().__init__(MESSAGES[reason])
+        self.reason = reason
+
+    @property
+    def message(self) -> str:
+        return MESSAGES.get(self.reason, MESSAGES[NOT_A_VENUE_URL])
 
 
 def venue_ids(url: str) -> list[str] | None:
@@ -93,16 +121,9 @@ def resolve_venue_url(url: str, key: str) -> str:
         return discovery_url(ids)
     n = venue_page_id(url)
     if n is None:
-        raise VenueNotFound(
-            "Not a Ticketmaster venue URL: paste a Discovery URL "
-            "(https://app.ticketmaster.com/discovery/v2/events?venueId=<id>) "
-            "or a ticketmaster.com /venue/<number> page."
-        )
+        raise VenueNotFound(NOT_A_VENUE_URL)
     if not key:
-        raise VenueNotFound(
-            "TICKETMASTER_API_KEY is not set: it is needed to look up a venue page. Set it, "
-            "or paste the Discovery URL with the venueId."
-        )
+        raise VenueNotFound(NO_KEY)
     with httpx.Client(headers=DEFAULT_HEADERS, timeout=30) as client:
         resp = client.get(VENUES_API, params={"apikey": key, "keyword": _keyword(url)})
         resp.raise_for_status()
@@ -113,10 +134,7 @@ def resolve_venue_url(url: str, key: str) -> str:
         vid = v.get("id") or ""
         if vurl.endswith(suffix) and _ID_RE.match(vid):
             return discovery_url([vid])
-    raise VenueNotFound(
-        f"No Ticketmaster venue matched {suffix}: find the venue's Discovery id and paste "
-        "https://app.ticketmaster.com/discovery/v2/events?venueId=<id>"
-    )
+    raise VenueNotFound(NO_MATCH)
 
 
 def parse_venue_event(raw: dict, cfg=None) -> EventData | None:

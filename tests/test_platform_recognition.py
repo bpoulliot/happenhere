@@ -98,7 +98,7 @@ def test_a_venue_page_is_resolved_through_the_api_only(monkeypatch, no_network):
 
 def test_an_unresolved_venue_page_says_what_to_paste(monkeypatch, no_network):
     def resolve(url, key):
-        raise ticketmaster_venue.VenueNotFound("paste the Discovery venueId URL")
+        raise ticketmaster_venue.VenueNotFound(ticketmaster_venue.NO_MATCH)
 
     monkeypatch.setattr(ticketmaster_venue, "resolve_venue_url", resolve)
     res = discovery.detect(
@@ -170,7 +170,7 @@ def test_saving_a_venue_page_stores_the_resolved_discovery_url(admin, monkeypatc
 
 def test_saving_an_unresolved_venue_page_is_refused_with_the_message(admin, monkeypatch):
     def resolve(url, key):
-        raise ticketmaster_venue.VenueNotFound("No venue matched: paste the Discovery venueId URL")
+        raise ticketmaster_venue.VenueNotFound(ticketmaster_venue.NO_MATCH)
 
     monkeypatch.setattr(ticketmaster_venue, "resolve_venue_url", resolve)
     _, client = admin
