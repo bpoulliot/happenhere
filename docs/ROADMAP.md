@@ -34,7 +34,7 @@ item that is not READY.
 | 03 | 1 | Feeds by tag and by venue, stable event UIDs, "add to calendar" links | **DONE** |
 | 04 | 1 | Personal feeds behind a long random token; an "artists I listen to" feed | **NEEDS MEASUREMENT** |
 | 05 | 1 | Idempotent source import/export from a YAML file | **DONE** |
-| 06 | 2 | Per-source canary: a source that returns zero events or keeps failing raises one alert | **READY** |
+| 06 | 2 | Per-source canary: a source that returns zero events or keeps failing raises one alert | **DONE** |
 | 07 | 0 | Deprecations that will break: `datetime.utcnow()`, `ORJSONResponse`, authlib/Starlette on `httpx` | **DONE** |
 | 08 | 2 | Release workflow without a personal access token, compatible with a PR-only `main` | **NEEDS DECISION** |
 | 09 | 0 | Dependency bumps, low risk: CI actions and patch-level libraries (Dependabot) | **DONE** |
@@ -205,11 +205,62 @@ item 03 adds the field to the model (item 03 must then store it and replace
 refuses the import, so an export of a database holding a source whose host has gone away does not
 re-import until that entry is fixed; the same rule as saving it in the admin form.
 
-### 06 — Per-source canary — READY
+### 06 — Per-source canary — DONE
 
 After each scrape run, a source with zero upcoming events for two consecutive runs, or a
 non-zero `error_count` for three, raises one notification (the existing ntfy settings) naming it;
 it re-arms when the source recovers. Shown in the admin source list too. Tests with a fake clock.
+
+**Built** (`app/canary.py`, called from `run_all_scrapers` after the sources, before the image backfill; a canary
+fault is logged and never ends the run):
+
+* **Counted:** every ENABLED source, once per run. `empty_runs` counts consecutive runs with no *shown* upcoming
+  event (`models.shown_events` from now: not past, not retired); `error_runs` counts consecutive runs with a non-zero
+  `error_count`. The two streaks are independent. Trip: `empty_runs >= 2` (`EMPTY`) or `error_runs >= 3` (`FAILING`).
+  A manual single-source run (`run_single_scraper`) is not a scrape run and counts nothing.
+* **State** on `sources` (`empty_runs`, `error_runs`, `canary_alerted_at`, all nullable, added by `_migrate_schema`).
+  A source is *pending* when tripped with `canary_alerted_at` NULL. A run in which it is no longer tripped on either
+  condition clears `canary_alerted_at`, so a later trip alerts again; while it stays tripped it is silent, also when
+  the cause changes from one condition to the other.
+* **One message per run** listing every pending source (display name, the condition, `last_error` as one line cut to
+  120 characters). Title `<city_name or HappenHere> — canary: N source(s) quiet or failing` (never the digest's
+  title), tag `warning`, `click` = the source's admin edit page when one source is listed, `/admin` when several are
+  (needs `public_url`). Same ntfy settings and topic as the digest.
+* **The alert is recorded only after the POST succeeded**, so a failed POST, or ntfy not configured yet, leaves the
+  source pending and the next run retries it (together with any newly tripped source, still in one message).
+* **Disabled sources** are never counted; a run clears a disabled source's streaks and `canary_alerted_at`, so a
+  source re-enabled later starts from zero. The admin list shows a disabled source no canary badge.
+* **The digest is untouched:** the canary writes no `NotificationLog` row (the digest's gate reads only its own
+  `app_meta` keys); `test_the_digest_gate_still_fires_and_skips_as_before` runs the digest between canary runs.
+* **Admin:** each tripped source gets a badge in the Status column (`canary: no events` / `canary: failing`, with
+  `(alert pending)` until the alert went out), `data-canary="empty|failing"` for the render tests.
+
+**Tests** (`tests/test_canary.py`, 27, a fake clock passed to `canary.check(now)`, a faked ntfy POST, a temp
+database): two empty runs trip and one does not; three error runs trip and two do not; past and retired events are
+not upcoming; silence while tripped; recovery re-arms (both conditions); a healthy run resets a streak; disabled
+never trips and a disabled source's streak is cleared; a failed or raising POST retries; no ntfy configured sends
+nothing and sends later when configured; two sources in one run are one message and a later trip lists only the new
+one; the click URL; the title is not the digest's; no `NotificationLog` row; the digest gate; the hook in
+`run_all_scrapers` and its isolation from a canary fault; the migration of a database without the columns; the three
+badge renders.
+
+**Failing first:** before `app/canary.py` existed the module did not collect
+(`ImportError: cannot import name 'canary' from 'app'`, 1 error, 0 tests run).
+**Mutants** (each run against the 27 tests, then reverted):
+
+| Mutant | Result |
+|---|---|
+| alert on every run while tripped (drop the `canary_alerted_at is None` filter) | 5 failed (`test_a_tripped_source_does_not_alert_again`, retry, later-trip, click, scrape-run) |
+| disabled sources counted (drop the reset branch) | 2 failed (`test_a_disabled_source_never_trips`, `test_disabling_a_counting_source_clears_its_streak`) |
+| `conditions()` ignores `enabled` | 1 failed (`test_disabling_a_tripped_source_hides_its_badge_before_the_next_run`); survived until that test was added |
+| a failed POST marks the source alerted | 2 failed |
+| recovery does not clear the alert | 2 failed |
+| one POST per source | 2 failed |
+| trip after 1 empty run / after 2 error runs | 6 / 3 failed |
+
+**Not done:** `run_single_scraper` (the admin's manual run) does not feed the streaks; a source with no scraper for
+its type (a missing plugin) is counted as empty like any source with no events, which is the signal wanted.
+**Deploying:** the first alerts arrive after the second scheduled run (empty sources) and the third (failing ones).
 
 ### 07 — Deprecations — DONE
 
