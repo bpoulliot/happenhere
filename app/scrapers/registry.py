@@ -19,6 +19,7 @@ from .generic import (
 )
 from .meetup import MeetupScraper
 from .ticketmaster import TicketmasterScraper
+from .ticketmaster_venue import TicketmasterVenueScraper
 
 try:
     from .fathom import FathomScraper
@@ -34,6 +35,7 @@ _TYPE_MAP: dict[str, type[BaseScraper]] = {
     "squarespace": GenericSquarespaceScraper,
     "playwright_jsonld": GenericPlaywrightJsonLdScraper,
     "ticketmaster": TicketmasterScraper,
+    "ticketmaster_venue": TicketmasterVenueScraper,
     "eventbrite": EventbriteScraper,
     "meetup": MeetupScraper,
 }
@@ -49,6 +51,7 @@ TYPE_LABELS: dict[str, str] = {
     "squarespace": "Squarespace Events",
     "playwright_jsonld": "JavaScript (JSON-LD)",
     "ticketmaster": "Ticketmaster (regional)",
+    "ticketmaster_venue": "Ticketmaster venue",
     "eventbrite": "Eventbrite (regional)",
     "meetup": "Meetup (regional)",
     "fathom": "Fathom Entertainment",
@@ -61,6 +64,7 @@ DETECTION_TYPE_MAP: dict[str, str] = {
     "spothopper": "spothopper",
     "squarespace": "squarespace",
     "playwright_jsonld": "playwright_jsonld",
+    "ticketmaster_venue": "ticketmaster_venue",
 }
 
 

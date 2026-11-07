@@ -13,6 +13,49 @@ log = logging.getLogger(__name__)
 _API = "https://app.ticketmaster.com/discovery/v2/events"
 _PAGE_SIZE = 200
 
+DISCOVERY_EVENTS = "https://app.ticketmaster.com/discovery/v2/events.json"
+# Discovery refuses a deep page: ``size * page`` must stay under 1000, so a query returns at
+# most 1000 events. A search with more must be split (a narrower query, date windows).
+DISCOVERY_MAX_RESULTS = 1000
+
+
+def page_discovery_events(
+    client: httpx.Client,
+    key: str,
+    params: dict[str, str],
+    *,
+    page_size: int = _PAGE_SIZE,
+    max_results: int = DISCOVERY_MAX_RESULTS,
+) -> list[dict]:
+    """Every raw event a Discovery ``events.json`` query returns, page by page.
+
+    ``params`` is the query (``venueId``, ``latlong`` + ``radius``, ...); this adds the key,
+    ``size``, ``page``, ``sort=date,asc`` and ``startDateTime`` (now, UTC) unless given. It
+    stops at the last page, at an empty page, or when the next page would start at
+    ``max_results`` (the API's cap). The key goes in the request only, never in a stored URL;
+    the request log line is redacted by ``app.logredact`` (item 21).
+    """
+    base = {
+        "size": str(page_size),
+        "sort": "date,asc",
+        "startDateTime": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    base.update(params)
+    events: list[dict] = []
+    page = 0
+    while page * page_size < max_results:
+        resp = client.get(DISCOVERY_EVENTS, params={**base, "apikey": key, "page": str(page)})
+        resp.raise_for_status()
+        data = resp.json()
+        raw = data.get("_embedded", {}).get("events", [])
+        if not raw:
+            break
+        events.extend(raw)
+        if page >= data.get("page", {}).get("totalPages", 1) - 1:
+            break
+        page += 1
+    return events[:max_results]
+
 
 class TicketmasterScraper(BaseScraper):
     SOURCE_NAME = "ticketmaster"

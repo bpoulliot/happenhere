@@ -32,9 +32,44 @@ def fetch_soup_cloudscraper(url: str) -> BeautifulSoup:
     return BeautifulSoup(resp.text, "lxml")
 
 
+# Keys under which a top-level or ``@graph`` item (a ``Place``, an ``Organization``) lists its
+# events. ``Events`` is not schema.org, but a ticketing platform publishes it (items 12, 23).
+NESTED_EVENT_KEYS = ("event", "events", "Events")
+
+
+def is_event_type(item: object) -> bool:
+    """Whether a JSON-LD item is a schema.org Event: ``Event``, any ``…Event`` subtype
+    (``EducationEvent``, ``ComedyEvent``) or ``Festival``; ``@type`` a string or a list."""
+    if not isinstance(item, dict):
+        return False
+    types = item.get("@type")
+    if not isinstance(types, list):
+        types = [types]
+    return any(isinstance(t, str) and (t.endswith("Event") or t == "Festival") for t in types)
+
+
 def extract_jsonld_events(soup: BeautifulSoup) -> list[dict]:
-    """Extract schema.org Event objects from JSON-LD script tags."""
-    results = []
+    """Extract schema.org Event objects from JSON-LD script tags.
+
+    Reads top-level items and ``@graph`` items, and the events nested one level down under
+    any such item's ``event`` / ``events`` / ``Events`` key (a list or a single object). A
+    page that lists one event both top level and nested gives it once: one event is the
+    same ``url`` at the same ``startDate``, or with no ``url`` the same ``(name, startDate)``.
+    """
+    results: list[dict] = []
+    seen: set[tuple] = set()
+
+    def add(item: object) -> None:
+        if not isinstance(item, dict) or not is_event_type(item):
+            return
+        start = str(item.get("startDate") or "")
+        url = item.get("url")
+        key = ("url", url, start) if url else ("name", str(item.get("name") or ""), start)
+        if key in seen:
+            return
+        seen.add(key)
+        results.append(item)
+
     for tag in soup.find_all("script", type="application/ld+json"):
         try:
             data = json.loads(tag.string or "")
@@ -46,13 +81,16 @@ def extract_jsonld_events(soup: BeautifulSoup) -> list[dict]:
             items = data["@graph"]
         else:
             items = [data]
+        if not isinstance(items, list):
+            items = [items]
         for item in items:
-            if isinstance(item, dict) and item.get("@type") in (
-                "Event",
-                "MusicEvent",
-                "TheaterEvent",
-            ):
-                results.append(item)
+            if not isinstance(item, dict):
+                continue
+            add(item)
+            for k in NESTED_EVENT_KEYS:
+                nested = item.get(k)
+                for sub in nested if isinstance(nested, list) else [nested]:
+                    add(sub)
     return results
 
 
