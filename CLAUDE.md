@@ -111,10 +111,17 @@ Public, read-only `text/calendar`, `ETag` + `Cache-Control: public, max-age=900`
 
 - `/feed/all.ics` (`/feed/events.ics` is an alias, kept for existing subscriptions);
 - `/feed/tags/<tag>[+<tag>...].ics`: events whose source carries **every** listed tag;
-- `/feed/venue/<source-name>.ics`: one source.
+- `/feed/venue/<source-name>.ics`: one source;
+- `/feed/area/<area>[+<area>...].ics` (item 31): one search location's events, or the union of several
+  (an event in two areas is one VEVENT). `<area>` is the slug of the location's label (`app/areas.py`:
+  lowercase ASCII, `-` between words; `area-<id>` if the label has no ASCII letter), and two labels
+  cannot share a slug. An event is in an area when it was found for that location (`event_locations`)
+  or, with no such link, when its source's `area_id` names it (set in the source form or `area:` in
+  `sources.yml`).
 
-An unknown tag or source is a 404. Tags are slugs (`[a-z0-9-]`) on a source, set in the admin form or
-`sources.yml`; `categories` only label events in the UI. `/feeds` lists every feed with an upcoming
+An unknown tag, source or area is a 404. Tags are slugs (`[a-z0-9-]`) on a source, set in the admin form or
+`sources.yml`; `categories` only label events in the UI. The events page, the calendar and `/api/events` take `?area=<slug>` (repeatable; unknown slugs are
+ignored, none valid = every area). `/feeds` lists every feed with an upcoming
 event, with copy, `webcal://` and Google Calendar links. Each calendar is named `<site_name>` or
 `<site_name> — <selection>`.
 
