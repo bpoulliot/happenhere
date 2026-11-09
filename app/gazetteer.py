@@ -86,7 +86,7 @@ class _Data:
     places: dict[
         tuple[str, str], tuple[str, float, float]
     ]  # (state, norm name) -> (name, lat, lon)
-    points: tuple[tuple[float, float, str, str], ...]  # every place: lat, lon, name, state
+    points: tuple[tuple[float, float, str, str, float], ...]  # lat, lon, name, state, km²
 
 
 @lru_cache(maxsize=4)
@@ -104,14 +104,14 @@ def _load(directory: str) -> _Data:
     with (d / "places.tsv").open(encoding="utf-8") as f:
         for line in f:
             parts = line.rstrip("\n").split("\t")
-            if len(parts) != 5:
+            if len(parts) != 6:
                 continue
-            _geoid, name, state, lat, lon = parts
+            _geoid, name, state, lat, lon, area = parts
             row = (name, float(lat), float(lon))
             places.setdefault((state.upper(), _norm(name)), row)
             for alias in _aliases(name):
                 aliases.setdefault((state.upper(), _norm(alias)), row)
-            points.append((row[1], row[2], name, state.upper()))
+            points.append((row[1], row[2], name, state.upper(), float(area)))
     for k, v in aliases.items():  # an exact name always wins over another place's alias
         places.setdefault(k, v)
     return _Data(zcta, places, tuple(points))
@@ -132,17 +132,26 @@ NEAREST_MAX_KM = 50.0  # a hand-typed point farther than this from any US place 
 
 
 def nearest_place(lat: float, lon: float, max_km: float = NEAREST_MAX_KM) -> tuple[str, str]:
-    """The (name, state) of the bundled place nearest to a point, or ("", "") if none is within
+    """The (name, state) of the place a point lies in, or ("", "") if no bundled place is within
     ``max_km``. Used for the Meetup and Eventbrite searches, which take a city, and for the
-    label of a location the migration creates."""
-    best, best_d = ("", ""), max_km
-    for plat, plon, name, state in data().points:
+    label of a location the migration creates.
+
+    The files hold one point per place (its internal point) and its land area, not its outline,
+    so "lies in" is approximated: the largest place whose equal-area circle around its point
+    contains the point, else the place whose point is nearest. Nearest alone names a small
+    enclave whose point happens to be closer to a downtown than the surrounding city's own.
+    """
+    nearest, nearest_d = ("", ""), max_km
+    inside, inside_area = ("", ""), -1.0
+    for plat, plon, name, state, area in data().points:
         if abs(plat - lat) > 1.0 or abs(plon - lon) > 1.5:  # cheap box before the haversine
             continue
         d = _km(lat, lon, plat, plon)
-        if d <= best_d:
-            best, best_d = (name, state), d
-    return best
+        if d <= nearest_d:
+            nearest, nearest_d = (name, state), d
+        if d <= math.sqrt(area / math.pi) and area > inside_area:
+            inside, inside_area = (name, state), area
+    return inside if inside[0] else nearest
 
 
 def resolve(entry: str) -> Resolved:

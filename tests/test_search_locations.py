@@ -80,6 +80,16 @@ def test_latitude_longitude_is_taken_as_typed():
     assert gazetteer.resolve("10.0,-20.0").city == "Exampleton"
 
 
+def test_a_point_is_named_by_the_place_it_lies_in_not_a_nearer_enclave():
+    # "Tiny Enclave"'s point is nearer (1.5 km) than "Big Example"'s (5.8 km), but the point
+    # lies inside Big Example's equal-area circle (r 11.3 km) and outside the enclave's (0.7 km).
+    assert gazetteer.nearest_place(14.02, -24.05) == ("Big Example", "CA")
+    assert gazetteer.nearest_place(14.03, -24.06) == ("Big Example", "CA")  # the larger wins
+    assert gazetteer.nearest_place(14.6, -24.0) == ("", "")  # 66 km: no place
+    # Inside no circle (42 and 49 km away): the nearest point names it.
+    assert gazetteer.nearest_place(14.0, -24.45) == ("Tiny Enclave", "CA")
+
+
 @pytest.mark.parametrize(
     "entry,code",
     [

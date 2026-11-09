@@ -11,7 +11,9 @@ The vintage, source URLs and checksums of the files bundled now are in
 Writes, tab-separated, no header:
 
 * ``zcta.tsv``: ZIP code (ZCTA), latitude, longitude.
-* ``places.tsv``: GEOID, name, state (USPS code), latitude, longitude. The name loses its
+* ``places.tsv``: GEOID, name, state (USPS code), latitude, longitude, land area in km² (the
+  lookup names the place a point lies in by it: a small enclave's centre can be nearer to a
+  point downtown than the surrounding city's centre). The name loses its
   legal-status suffix ("New York city" -> "New York", "CDP", "(balance)"). One row per state
   and name: an active government (``FUNCSTAT`` A) wins over a statistical place, then the
   larger land area.
@@ -62,8 +64,10 @@ def trim_places(src: Path) -> list[str]:
     for r in _rows(src):
         name = place_name(r["NAME"])
         rank = (r.get("FUNCSTAT") == "A", int(r.get("ALAND") or 0))
+        area = int(r.get("ALAND") or 0) / 1e6
         line = (
-            f"{r['GEOID']}\t{name}\t{r['USPS']}\t{_coord(r['INTPTLAT'])}\t{_coord(r['INTPTLONG'])}"
+            f"{r['GEOID']}\t{name}\t{r['USPS']}\t{_coord(r['INTPTLAT'])}\t"
+            f"{_coord(r['INTPTLONG'])}\t{area:.2f}"
         )
         k = (r["USPS"], name.lower())
         if k not in best or rank > best[k][0]:

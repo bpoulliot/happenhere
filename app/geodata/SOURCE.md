@@ -6,7 +6,7 @@ Bureau's **2026 Gazetteer Files** (the national files, published September 2026)
 | File here | Source file | Columns kept |
 |---|---|---|
 | `zcta.tsv` | `2026_Gaz_zcta_national.txt` (ZIP Code Tabulation Areas) | ZCTA, latitude, longitude |
-| `places.tsv` | `2026_Gaz_place_national.txt` (Places) | GEOID, name, state, latitude, longitude |
+| `places.tsv` | `2026_Gaz_place_national.txt` (Places) | GEOID, name, state, latitude, longitude, land area (km²) |
 
 * Source page: <https://www.census.gov/geographies/reference-files/time-series/geo/gazetteer-files.html>
 * Downloads:
@@ -21,7 +21,9 @@ Bureau's **2026 Gazetteer Files** (the national files, published September 2026)
 * Trimmed by `scripts/gazetteer_trim.py`: coordinates are the internal point rounded to 4
   decimals (about 11 m); a place name loses its legal-status suffix ("city", "town", "CDP",
   "(balance)"), and one row is kept per state and name (an active government first, then the
-  larger land area). 33,791 ZCTAs, 32,139 places.
+  larger land area). The land area names the place a point lies in (`nearest_place`): the
+  largest place whose equal-area circle contains the point, else the nearest. 33,791 ZCTAs,
+  32,139 places.
 
 **Refresh** (each yearly release, a manual rebuild): download the two national ZIP files of
 the new vintage, unzip them into an empty directory, run
