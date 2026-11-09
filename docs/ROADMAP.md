@@ -23,7 +23,7 @@ item that is not READY.
   narrowest count) and the Docker build. `main` takes changes only through a PR with all of them
   green.
 
-**Next free item number: 27.** Always re-read it here before filing.
+**Next free item number: 29.** Always re-read it here before filing.
 
 ## Items
 
@@ -56,6 +56,7 @@ item that is not READY.
 | 25 | 0 | A same-title show first seen in a later run gets its own row; rows a source stops listing retire | **DONE** |
 | 26 | 0 | Scrapers that can return a truncated list retire events that are still on (item 25) | **NEEDS DECISION** |
 | 27 | 1 | A second show of a day (stored under `timed_hash`) whose time moves gets a new row and UID (item 15) | **NEEDS DECISION** |
+| 28 | 0 | One show listed twice in one batch under two ids (same title, venue and exact start) is one event | **DONE** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -1223,3 +1224,37 @@ new event, which item 15 forbids for the first show.
 same-day, same-venue row whose `slot` key the batch did not return, and move it (more matching
 rules, one more query per such event); (b) accept it: a second show whose time moves is rare.
 *Recommended: (b) until a deployment shows it; (a) if it does.*
+
+### 28 — One show listed twice in one batch under two ids is one event — DONE
+
+**Found 2026-11-09** by a deployment measuring a regional `ticketmaster` source against its
+per-venue sources on a copy of its database (counts only here; the measurement stays with the
+deployment). A ticketing platform can list one show under two event ids: the same title, venue
+and **exact start**. Item 18 made any same-hash pair with different identity keys in one batch a
+second show of the day, so the second id got a row of its own under `timed_hash` and the feed
+showed the show twice. In that measurement 16 of the regional sources' new rows were this case;
+the remaining double listings had another venue name or another title (not a dedup-hash case).
+
+**Spec (owner, 2026-11-09):** within one batch, an event whose dedup hash (title + day + venue)
+matches an earlier event of the batch **and whose start equals that earlier event's start** is
+the same event, whatever its identity key: it refreshes that row, no new row. A different start
+keeps item 18's rule (another show). Across runs nothing changes: a later run that returns only
+the second id is item 25's case (a different key on the same source: its own row, the old one
+retires).
+
+**Built:** `app/dedup.py` `upsert_events` keeps, per dedup hash, the start its first event in the
+batch gave (`batch_start`), on both the identity-key path and the hash path; the in-batch match
+merges when the keys agree, either is absent, or the starts are equal. The merged event's row is
+in `returned`, so nothing retires on the next run.
+
+**Failing first** (`tests/test_same_start_one_event.py` against `origin/main`): 3 failed, 3
+passed. The failures: two ids for one show in one batch (2 rows), the same merging into another
+source's row (2 shown rows), and a second run of that batch (2 new). The 3 passing are the guards:
+two ids at two times stay two shows (item 18), the same start at another venue and the same start
+with another title stay two events.
+
+**Mutants** (each against the full suite, then reverted):
+* the start comparison removed: fails the 3 tests above (3 failed).
+* `batch_start` not set on the identity-key path: fails
+  `test_the_merged_id_is_returned_and_nothing_retires` (1 failed of 432).
+
