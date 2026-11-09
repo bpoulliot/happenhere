@@ -125,7 +125,9 @@ def upsert_events(
 
     Two events in one batch with the same dedup hash (an early and a late show of one title,
     item 18) are one event when their identity keys agree or are absent, and two when the keys
-    differ: the second is stored under ``timed_hash`` (the hash plus the start time). The batch
+    differ: the second is stored under ``timed_hash`` (the hash plus the start time). Two with
+    the same exact start are one event whatever their keys (item 28: a ticketing platform lists
+    one show under two ids). The batch
     is tracked here because the session does not autoflush, so a query cannot see it.
 
     A dedup-hash match with a stored row that ``hash_match`` says is another event is stored
@@ -140,6 +142,7 @@ def upsert_events(
     resolved: list[Event] = []
     taken_hashes: set[str] = set()  # this batch's, which a query before commit cannot see
     batch: dict[str, tuple[Event, str | None]] = {}  # dedup hash -> (row, its key) this batch
+    batch_start: dict[str, datetime] = {}  # dedup hash -> the start its first event gave (item 28)
 
     new_count = 0
     updated_count = 0
@@ -160,14 +163,15 @@ def upsert_events(
                 row.dedup_hash = h
             taken_hashes.add(row.dedup_hash)
             batch[row.dedup_hash] = (row, key)
+            batch_start.setdefault(row.dedup_hash, ev.start_dt)
             resolved.append(row)
             updated_count += 1
             continue
 
         if h in batch:
             first, first_key = batch[h]
-            if key is None or key == first_key:
-                _refresh(first, ev)  # the same event listed twice
+            if key is None or key == first_key or ev.start_dt == batch_start.get(h):
+                _refresh(first, ev)  # the same event listed twice (item 28: under two ids)
                 updated_count += 1
                 continue
             h = timed_hash(ev)  # a different event with the same title, day and venue
@@ -219,6 +223,7 @@ def upsert_events(
             updated_count += 1
         taken_hashes.add(h)
         batch[h] = (row, key)
+        batch_start.setdefault(h, ev.start_dt)
         resolved.append(row)
     session.commit()
     if returned is not None:
