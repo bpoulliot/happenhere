@@ -59,7 +59,7 @@ item that is not READY.
 | 28 | 0 | One show listed twice in one batch under two ids (same title, venue and exact start) is one event | **DONE** |
 | 29 | 0 | No deployment location in the repository: example values, a default Meetup location, test addresses | **DONE** |
 | 30 | 1 | Search locations: one or more ZIP / city / lat-long areas with a radius, resolved offline; location-aware types fan out per area | **DONE** |
-| 31 | 1 | Area feeds: each search location is an area; `/feed/area/<label>.ics` and an area filter on the events page | **READY** (after 30) |
+| 31 | 1 | Area feeds: each search location is an area; `/feed/area/<label>.ics` and an area filter on the events page | **DONE** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -1387,7 +1387,7 @@ here).
   never fetches it). Both build their search from the location's city and state, or its own value.
 * **Refreshing the Gazetteer is manual** (each yearly release): `app/geodata/SOURCE.md`.
 
-### 31 — Area feeds — READY (after 30)
+### 31 — Area feeds — DONE
 
 **Owner's spec (2026-11-09).** Each search location's label (item 30) is an **area**. Every source
 carries its area (a per-venue source is assigned one by the admin; a location-aware source's events
@@ -1402,4 +1402,52 @@ admin disabling any source**:
   areas share appears in both with one UID; the page filter narrows and combines areas; export then
   import keeps every area unchanged.
 * **Depends on 30** (the location list and the per-event location).
+
+**Built (2026-11-09).**
+* **What an area is:** a search location's label (item 30). An event is in an area when it was
+  found for that location (`event_locations`), or, having no such link, when its source's new
+  `Source.area_id` names it. That gives a per-venue source its area (set by the admin, nothing is
+  ever scraped for it) and a fallback for a regional row stored before item 30 that no search has
+  linked yet; a link always wins over the source's area. The filter (`app/areas.py`) selects event
+  rows with `EXISTS`, never a join, so an event in two chosen areas is one row with the UID it has
+  in every other feed. A deleted location clears every source's area.
+* **The URL is the slug** of the label (`app/areas.py`: lowercase ASCII, `-` between words, `area-<id>`
+  if the label has no ASCII letter or digit), because a label may hold spaces, commas or a slash.
+  Two labels cannot share a slug (the admin form and a rename refuse the second with the same
+  fixed text as a duplicate label). `/feed/area/<slug>.ics`, or `/feed/area/<slug>+<slug>.ics` for
+  the union; an unknown slug (or a label, or a capital) is a 404; a known area with no events is an
+  empty calendar. The calendar is named `<site_name> — <label>[ + <label>]`; ETag and 304 as for
+  the other feeds. `/feeds` lists each area with an upcoming event, after "All events".
+* **The page filter:** `?area=<slug>` (repeat it for several) on `/events`, `/events/calendar`,
+  `/partials/event-list` and `/api/events`. It is a plain GET form of checkboxes, so the choice is in the
+  URL and can be bookmarked; the calendar's previous/next links and the list's live filters keep it. No
+  `area` (or only unknown ones: a bookmark of a renamed or deleted area) shows every area. The form is
+  absent while there are no locations. The heading names the chosen areas.
+* **Admin and import/export:** the source form has an **Area** select (`area_id`; "No area" is the
+  word `none`, because FastAPI reads an empty form value as absent; a form without the field leaves the
+  area alone; an unknown id is a 400 with the fixed `not_found` text). `sources.yml` carries
+  `area: <label>` per source; `area: null` clears it, an absent key leaves it unchanged, an unknown
+  label or a non-string refuses the whole file, and the export writes the key only for a source that has
+  one, so a deployment with no areas exports exactly what it did.
+* **Schema:** `sources.area_id` (INTEGER, no foreign key), added by `db._migrate_schema` on start.
+
+**Tests:** `tests/test_area_feeds.py` (45). **Failing first** (the new module on `origin/main`'s
+code): it cannot import `app.areas` (1 collection error); the other 511 tests pass there. After: 556
+pass. The existing feeds are byte-identical before and after areas are added to the same data
+(`generate_ics` with a fixed `now` for the all, tag-style and venue selections, and the HTTP bodies of
+`/feed/all.ics`, `/feed/events.ics`, a tag feed and a venue feed). **Mutants**, each failing tests:
+
+| Mutant | Failing tests |
+|---|---|
+| the area feed ignores the area filter | 4 (an area feed holds exactly its events, several areas in one feed, the ETag follows the events, the unlinked fallback) |
+| a shared event is emitted with a per-area UID | 2 (one UID in every feed; an area feed's UIDs are the all feed's) |
+| an event with links also falls back to its source's area | 1 |
+| the page filter ignores `area` | 3 (narrows, combines, unknown ignored) |
+
+**Findings, not fixed here:**
+* **The page's duplicate merge runs per view.** The area filter is applied before the page's
+  cross-source duplicate merge (`_dedup_events`), so an area view merges duplicates among that area's
+  events only; a duplicate listed by sources in two areas can show in each view.
+* **A location-aware source's `area:` is only a fallback**: its events carry the locations they were
+  found for, and a search that found nothing links nothing.
 

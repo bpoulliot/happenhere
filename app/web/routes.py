@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Red
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import joinedload
 
+from .. import areas as _areas
 from .. import auth as _auth
 from .. import digest as _digest
 from .. import locations as _locations
@@ -224,15 +225,13 @@ def _fmt_dt(dt: datetime | None) -> str:
     return dt.strftime("%a, %b %-d %Y · %-I:%M %p") if dt.hour else dt.strftime("%a, %b %-d %Y")
 
 
-def _query_events(session, days=30, category="", source="", search="") -> dict:
+def _query_events(
+    session, days=30, category="", source="", search="", area_ids: list[int] | None = None
+) -> dict:
     now = datetime.now()
     cutoff = now + timedelta(days=days)
-    q = (
-        shown_events(session, now, cutoff)
-        .options(joinedload(Event.source))
-        .order_by(Event.start_dt)
-    )
-    rows = q.all()
+    q = _areas.in_areas(shown_events(session, now, cutoff), area_ids)
+    rows = q.options(joinedload(Event.source)).order_by(Event.start_dt).all()
     events = [_event_to_dict(e) for e in rows]
     events = _dedup_events(events)
     if category:
@@ -279,12 +278,41 @@ def _area_names(session) -> str:
     return ", ".join(r.label for r in _locations.all_locations(session))
 
 
+def _area_filter(session, wanted: list[str]) -> dict:
+    """The page's area filter (item 31) from the ``area`` query values (slugs).
+
+    ``ids`` is None (every area) when none of ``wanted`` names an area: an unknown or deleted
+    slug in a bookmark is ignored rather than hiding everything. ``choices`` is what the filter
+    form offers; it is empty, and the form hidden, while there are no areas.
+    """
+    rows = _locations.all_locations(session)
+    chosen = _areas.pick(session, wanted)
+    picked = {r.id for r in chosen}
+    return {
+        "ids": [r.id for r in chosen] or None,
+        "slugs": [_areas.slug_of(r) for r in chosen],
+        "labels": [r.label for r in chosen],
+        "choices": [
+            {"slug": _areas.slug_of(r), "label": r.label, "checked": r.id in picked} for r in rows
+        ],
+    }
+
+
 @router.get("/events", response_class=HTMLResponse)
-async def events_page(request: Request, days: int = 30, category: str = "", search: str = ""):
+async def events_page(
+    request: Request,
+    days: int = 30,
+    category: str = "",
+    search: str = "",
+    area: list[str] = Query([]),
+):
     with get_session() as session:
-        data = _query_events(session, days=days, category=category, search=search)
+        flt = _area_filter(session, area)
+        data = _query_events(
+            session, days=days, category=category, search=search, area_ids=flt["ids"]
+        )
         categories = _all_categories(session)
-        area_names = _area_names(session)
+        area_names = ", ".join(flt["labels"]) or _area_names(session)
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -297,6 +325,9 @@ async def events_page(request: Request, days: int = 30, category: str = "", sear
             "search": search,
             "categories": categories,
             "area_names": area_names,
+            "area_choices": flt["choices"],
+            "form_action": "/events",
+            "keep": {"days": days, "category": category, "search": search},
         },
     )
 
@@ -309,9 +340,17 @@ async def event_list_partial(
     source: str = "",
     search: str = "",
     limit: int = 100,
+    area: list[str] = Query([]),
 ):
     with get_session() as session:
-        data = _query_events(session, days=days, category=category, source=source, search=search)
+        data = _query_events(
+            session,
+            days=days,
+            category=category,
+            source=source,
+            search=search,
+            area_ids=_area_filter(session, area)["ids"],
+        )
     events = data["events"][:limit]
     return templates.TemplateResponse(
         request, "partials/event_list.html", {"request": request, "events": events}
@@ -319,7 +358,7 @@ async def event_list_partial(
 
 
 @router.get("/events/calendar", response_class=HTMLResponse)
-async def calendar_page(request: Request, month: str = ""):
+async def calendar_page(request: Request, month: str = "", area: list[str] = Query([])):
     import calendar as cal_mod
 
     try:
@@ -332,8 +371,12 @@ async def calendar_page(request: Request, month: str = ""):
         last_day = first_day.replace(month=first_day.month + 1, day=1) - timedelta(days=1)
 
     with get_session() as session:
+        flt = _area_filter(session, area)
         rows = (
-            shown_events(session, first_day, last_day.replace(hour=23, minute=59))
+            _areas.in_areas(
+                shown_events(session, first_day, last_day.replace(hour=23, minute=59)),
+                flt["ids"],
+            )
             .options(joinedload(Event.source))
             .order_by(Event.start_dt)
             .all()
@@ -359,6 +402,10 @@ async def calendar_page(request: Request, month: str = ""):
             "cal": cal,
             "events_by_day": events_by_day,
             "today": today,
+            "area_choices": flt["choices"],
+            "area_qs": "".join(f"&area={quote(s)}" for s in flt["slugs"]),
+            "form_action": "/events/calendar",
+            "keep": {"month": first_day.strftime("%Y-%m")},
         },
     )
 
@@ -384,7 +431,12 @@ def _etag_matches(header: str | None, etag: str) -> bool:
 
 
 def _feed_response(
-    request: Request, session, filename: str, selection: str, source_ids: list[int] | None
+    request: Request,
+    session,
+    filename: str,
+    selection: str,
+    source_ids: list[int] | None,
+    area_ids: list[int] | None = None,
 ) -> Response:
     cfg = get_config()
     name = _calendar_name(selection)
@@ -393,6 +445,7 @@ def _feed_response(
         name=name,
         description=f"Local events from {name}",
         source_ids=source_ids,
+        area_ids=area_ids,
         lookahead_days=cfg.feed_lookahead_days,
     )
     etag = '"' + hashlib.sha256(ics).hexdigest()[:32] + '"'
@@ -435,6 +488,27 @@ async def feed_tags(request: Request, selection: str):
         return _feed_response(request, session, f"{'+'.join(tags)}.ics", " + ".join(tags), ids)
 
 
+@router.get("/feed/area/{selection}.ics")
+async def feed_area(request: Request, selection: str):
+    """Item 31: one area's events (``/feed/area/<slug>.ics``), or the union of several
+    (``/feed/area/<slug>+<slug>.ics``). The UIDs are the ones every other feed has."""
+    slugs = list(dict.fromkeys(selection.split("+")))
+    with get_session() as session:
+        known = _areas.by_slug(session)
+        for s in slugs:
+            if s not in known:
+                return _not_found(f"area {s!r}")
+        rows = [known[s] for s in slugs]
+        return _feed_response(
+            request,
+            session,
+            f"{'+'.join(slugs)}.ics",
+            " + ".join(r.label for r in rows),
+            None,
+            [r.id for r in rows],
+        )
+
+
 @router.get("/feed/venue/{source_name}.ics")
 async def feed_venue(request: Request, source_name: str):
     with get_session() as session:
@@ -467,10 +541,22 @@ async def feeds_page(request: Request):
         for r in rows:
             per_source[r.source_id] = per_source.get(r.source_id, 0) + 1
         sources = _tagged_sources(session)
+        area_counts = [  # item 31: (label, slug, upcoming events) per area
+            (
+                r.label,
+                _areas.slug_of(r),
+                len(feed_rows(session, area_ids=[r.id], lookahead_days=cfg.feed_lookahead_days)),
+            )
+            for r in _locations.all_locations(session)
+        ]
     feeds: list[dict] = []
     if rows:
         feeds.append({"kind": "all", "label": "All events", "count": len(rows)})
         feeds[-1].update(_feed_links(base, "/feed/all.ics"))
+    for label, slug, n in area_counts:
+        if n:
+            feeds.append({"kind": "area", "label": label, "count": n})
+            feeds[-1].update(_feed_links(base, f"/feed/area/{quote(slug)}.ics"))
     tag_counts: dict[str, int] = {}
     for s, ts in sources:
         for t in ts:
@@ -504,9 +590,17 @@ async def api_events(
     category: str = Query(""),
     source: str = Query(""),
     search: str = Query(""),
+    area: list[str] = Query([]),
 ):
     with get_session() as session:
-        return _query_events(session, days=days, category=category, source=source, search=search)
+        return _query_events(
+            session,
+            days=days,
+            category=category,
+            source=source,
+            search=search,
+            area_ids=_area_filter(session, area)["ids"],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -518,6 +612,7 @@ def _src_to_dict(s: Source) -> dict:
     return {
         "location_aware": is_location_aware(s.type or ""),
         "location_ids": _locations.assigned_ids(s),
+        "area_id": s.area_id,
         "name": s.name,
         "display_name": s.display_name or "",
         "type": s.type or "",
@@ -679,6 +774,31 @@ def _assign_from_form(session, src: Source, mode: str, ids: list[int]) -> None:
         _locations.assign(src, [i for i in ids if i in known])
 
 
+# FastAPI reads an empty form value as absent and substitutes the default, so "no area" is its
+# own word: the form field's default (``_AREA_KEPT``, an older form without the field) leaves the
+# area alone, ``_AREA_NONE`` clears it.
+_AREA_KEPT = "keep"
+_AREA_NONE = "none"
+
+
+def _area_from_form(session, value: str) -> tuple[bool, int | None, bool]:
+    """The source form's area choice (item 31): (given, area id, valid). ``_AREA_KEPT`` = the
+    form had no such field (an older form: leave the area alone); ``_AREA_NONE`` = no area; else a
+    location id."""
+    value = value.strip()
+    if value in (_AREA_KEPT, ""):
+        return False, None, True
+    if value == _AREA_NONE:
+        return True, None, True
+    if (
+        not value.isascii()
+        or not value.isdigit()
+        or session.get(SearchLocation, int(value)) is None
+    ):
+        return True, None, False
+    return True, int(value), True
+
+
 @router.post("/admin/sources")
 async def source_create(
     display_name: str = Form(...),
@@ -689,6 +809,7 @@ async def source_create(
     enabled: str = Form("off"),
     locations_mode: str = Form(""),
     location_ids: list[int] = Form([]),
+    area_id: str = Form(_AREA_KEPT),
 ):
     name = _slugify(display_name)
     if scraper_type == "ticketmaster_venue":
@@ -710,6 +831,9 @@ async def source_create(
             status_code=400,
         )
     with get_session() as session:
+        _, area, area_ok = _area_from_form(session, area_id)
+        if not area_ok:
+            return PlainTextResponse(_locations.MESSAGES["not_found"], status_code=400)
         # Ensure unique name
         base = name
         i = 1
@@ -725,6 +849,7 @@ async def source_create(
             tags=json.dumps(tag_list),
             enabled=(enabled == "on"),
             last_error=check_error,
+            area_id=area,
         )
         _assign_from_form(session, src, locations_mode or "all", location_ids)
         session.add(src)
@@ -743,6 +868,7 @@ async def source_update(
     enabled: str = Form("off"),
     locations_mode: str = Form(""),
     location_ids: list[int] = Form([]),
+    area_id: str = Form(_AREA_KEPT),
 ):
     if scraper_type == "ticketmaster_venue":
         url, refused = _ticketmaster_venue_url(url)
@@ -764,7 +890,12 @@ async def source_update(
         )
     with get_session() as session:
         src = session.query(Source).filter_by(name=source_name).first()
+        given, area, area_ok = _area_from_form(session, area_id)
+        if not area_ok:
+            return PlainTextResponse(_locations.MESSAGES["not_found"], status_code=400)
         if src:
+            if given:
+                src.area_id = area
             src.display_name = display_name
             src.type = scraper_type
             src.url = url

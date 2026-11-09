@@ -83,6 +83,7 @@ def _migrate_schema(engine) -> None:
             "error_runs": "INTEGER DEFAULT 0",
             "canary_alerted_at": "DATETIME",
             "location_ids": "TEXT",  # item 30
+            "area_id": "INTEGER",  # item 31
         }.items():
             if col not in source_cols:
                 conn.execute(text(f"ALTER TABLE sources ADD COLUMN {col} {typ}"))

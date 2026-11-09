@@ -76,6 +76,16 @@
         {% endfor %}
         <small>Used by the types that search an area: the source runs once per location. <a href="/admin/locations">Manage locations</a></small>
       </div>
+      <div class="form-group" id="area-group">
+        <label for="area-id">Area</label>
+        <select name="area_id" id="area-id">
+          <option value="none">No area</option>
+          {% for loc in locations %}
+          <option value="{{ loc.id }}" {{ 'selected' if source and source.area_id == loc.id }}>{{ loc.label }}</option>
+          {% endfor %}
+        </select>
+        <small>Subscribers filter by area without any source being disabled: /feed/area/&lt;area&gt;.ics and the events page filter. A venue is in the area you pick here; events a search location found are in that location's area. <a href="/admin/locations">Manage locations</a></small>
+      </div>
       <div class="form-group">
         <label class="checkbox-label">
           <input type="checkbox" name="enabled" value="on" {{ 'checked' if not source or source.enabled }}>

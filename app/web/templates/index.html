@@ -20,7 +20,9 @@
       {% endfor %}
     </select>
     <input type="search" name="search" placeholder="Search events…" value="{{ search }}">
+    {% for a in area_choices if a.checked %}<input type="hidden" name="area" value="{{ a.slug }}">{% endfor %}
   </form>
+  {% include "partials/area_filter.html" %}
 </div>
 
 <div id="event-grid" class="event-grid">

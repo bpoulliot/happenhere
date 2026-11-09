@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from . import gazetteer
+from . import areas, gazetteer
 from .models import AppMeta, EventLocation, SearchLocation, Source
 from .scrapers.base import SearchArea
 
@@ -41,7 +41,7 @@ MAX_LABEL = 60
 MESSAGES = {
     **gazetteer.MESSAGES,
     "label": f"A location needs a label of 1 to {MAX_LABEL} characters.",
-    "label_taken": "Another location already has that label.",
+    "label_taken": "Another location already has that label (or one that reads the same in a URL).",
     "radius": f"The radius must be a number from 1 to {MAX_RADIUS}.",
     "unit": "The radius unit must be miles or km.",
     "not_found": "No such location.",
@@ -124,6 +124,12 @@ def _clean(session: Session, *, exclude_id: int | None = None, **fields) -> dict
         q = q.filter(SearchLocation.id != exclude_id)
     if q.first() is not None:
         raise LocationInvalid("label_taken")
+    # Item 31: an area is addressed by the slug of its label, so no two labels share one.
+    slug = areas.slug(out["label"])
+    if slug and any(
+        areas.slug_of(r) == slug for r in session.query(SearchLocation) if r.id != exclude_id
+    ):
+        raise LocationInvalid("label_taken")
     return out
 
 
@@ -170,8 +176,9 @@ def update(session: Session, location_id: int, **fields) -> SearchLocation:
 
 
 def delete(session: Session, location_id: int) -> None:
-    """Remove a location, its event links, and its id from every source's assignment."""
+    """Remove a location, its event links, and its id from every source's assignment and area."""
     session.query(EventLocation).filter_by(location_id=location_id).delete()
+    session.query(Source).filter_by(area_id=location_id).update({Source.area_id: None})
     for src in session.query(Source).filter(Source.location_ids.isnot(None)).all():
         ids = assigned_ids(src)
         if ids is not None and location_id in ids:

@@ -4,11 +4,17 @@
 {% block content %}
 <div class="page-header">
   <div class="cal-nav">
-    <a href="/events/calendar?month={{ prev_month }}" class="btn-nav">‹ Prev</a>
+    <a href="/events/calendar?month={{ prev_month }}{{ area_qs }}" class="btn-nav">‹ Prev</a>
     <h1>{{ month_label }}</h1>
-    <a href="/events/calendar?month={{ next_month }}" class="btn-nav">Next ›</a>
+    <a href="/events/calendar?month={{ next_month }}{{ area_qs }}" class="btn-nav">Next ›</a>
   </div>
 </div>
+
+{% if area_choices %}
+<div class="filters">
+  {% include "partials/area_filter.html" %}
+</div>
+{% endif %}
 
 <div class="cal-grid">
   <div class="cal-dow">Sun</div>

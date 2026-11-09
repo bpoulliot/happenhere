@@ -33,6 +33,10 @@ class Source(Base):
     # Item 30: the search locations a location-aware source runs over, a JSON list of
     # ``search_locations.id``. NULL = every location (the default); ``[]`` = none.
     location_ids = Column(Text)
+    # Item 31: the area (a ``search_locations.id``) a per-venue source belongs to, or NULL. An
+    # event found for specific locations is in those areas (``event_locations``); an event with
+    # no such link is in its source's area. No foreign key: ``locations.delete`` clears it.
+    area_id = Column(Integer)
 
     events = relationship("Event", back_populates="source")
 
