@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from icalendar import Calendar, Event, Timezone
 from sqlalchemy.orm import Session
 
+from .areas import in_areas
 from .dedup import legacy_uid
 from .models import Event as EventRow
 from .models import shown_events
@@ -24,14 +25,17 @@ def feed_rows(
     session: Session,
     *,
     source_ids: list[int] | None = None,
+    area_ids: list[int] | None = None,
     lookahead_days: int = 365,
     now: datetime | None = None,
 ) -> list[EventRow]:
-    """Upcoming events within the look-ahead, optionally only from some sources."""
+    """Upcoming events within the look-ahead, optionally only from some sources and/or in some
+    areas (item 31; an event is one row however many of the areas it is in)."""
     now = now or datetime.now(UTC).replace(tzinfo=None)  # naive UTC, as utcnow() was
     q = shown_events(session, now, now + timedelta(days=lookahead_days))
     if source_ids is not None:
         q = q.filter(EventRow.source_id.in_(source_ids))
+    q = in_areas(q, area_ids)
     return q.order_by(EventRow.start_dt, EventRow.id).all()
 
 
@@ -41,11 +45,13 @@ def generate_ics(
     name: str = "HappenHere",
     description: str = "",
     source_ids: list[int] | None = None,
+    area_ids: list[int] | None = None,
     lookahead_days: int = 365,
     now: datetime | None = None,
 ) -> bytes:
-    """One calendar. ``name`` is its X-WR-CALNAME; ``source_ids`` (None = every source) and
-    the look-ahead select its events. The same rows always give the same bytes (the ETag)."""
+    """One calendar. ``name`` is its X-WR-CALNAME; ``source_ids`` (None = every source),
+    ``area_ids`` (None = every area, item 31) and the look-ahead select its events. The same rows always give the same bytes (the ETag).
+    """
     cal = Calendar()
     cal.add("prodid", PRODID)
     cal.add("version", "2.0")
@@ -58,7 +64,13 @@ def generate_ics(
 
     _add_vtimezone(cal, tz)
 
-    rows = feed_rows(session, source_ids=source_ids, lookahead_days=lookahead_days, now=now)
+    rows = feed_rows(
+        session,
+        source_ids=source_ids,
+        area_ids=area_ids,
+        lookahead_days=lookahead_days,
+        now=now,
+    )
 
     for row in rows:
         vevent = Event()

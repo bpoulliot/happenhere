@@ -27,6 +27,14 @@ never deleted::
         type: ticketmaster
         url: https://app.ticketmaster.com/discovery/v2/events
         locations: [Midtown]    # or "all" (the default for a new source); absent = unchanged
+      - name: hall
+        type: ical
+        url: https://hall.example.com/events.ics
+        area: Midtown           # the area (item 31): a location's label; null = none; absent = unchanged
+
+An area is a search location's label (item 31). A per-venue source is assigned one with ``area:``;
+a location-aware source's events carry the locations they were found for. The export writes
+``area:`` only for a source that has one.
 """
 
 from __future__ import annotations
@@ -53,7 +61,17 @@ log = logging.getLogger(__name__)
 
 _NAME_RE = re.compile(r"^[\w.-]+$")
 _TAG_RE = re.compile(r"^[a-z0-9-]+$")
-_FIELDS = {"name", "display_name", "type", "url", "categories", "tags", "enabled", "locations"}
+_FIELDS = {
+    "name",
+    "display_name",
+    "type",
+    "url",
+    "categories",
+    "tags",
+    "enabled",
+    "locations",
+    "area",
+}
 _LOCATION_FIELDS = {"label", "where", "radius", "unit", "meetup_location", "eventbrite_region"}
 ALL = "all"  # a source's ``locations:`` value for every location
 
@@ -222,6 +240,11 @@ def _validate_entry(raw: object, label: str) -> tuple[dict | None, list[str]]:
         else:
             locs = [" ".join(x.split()) for x in locs]
 
+    area = raw.get("area")
+    if area is not None and not (isinstance(area, str) and area.strip()):
+        errors.append(f"{label}: area must be a location label, or null for none")
+        area = None
+
     if errors:
         return None, errors
     entry = {
@@ -236,6 +259,8 @@ def _validate_entry(raw: object, label: str) -> tuple[dict | None, list[str]]:
         entry["tags"] = list(tags)
     if "locations" in raw and locs is not None:
         entry["locations"] = ALL if locs == ALL else list(locs)
+    if "area" in raw:  # absent = unchanged; null = none
+        entry["area"] = " ".join(area.split()) if area else None
     if refusal:
         entry["refusal"] = refusal  # not a column: build_plan turns it into last_error + a warning
     return entry, []
@@ -340,6 +365,7 @@ def _current(src: Source, labels: dict[int, str] | None = None) -> dict:
     else:
         labels = labels or {}
         out["locations"] = [labels[i] for i in ids if i in labels]
+    out["area"] = (labels or {}).get(src.area_id) if src.area_id is not None else None
     return out
 
 
@@ -449,6 +475,11 @@ def build_plan(
         for x in e["locations"]
         if x.lower() not in known
     ]
+    bad += [
+        f"entry {e['name']!r}: unknown area {e['area']!r} (add it under 'locations:')"
+        for e in entries
+        if e.get("area") and e["area"].lower() not in known
+    ]
     if bad:
         raise ImportRefused(f"{len(bad)} problem(s), nothing written:\n  " + "\n  ".join(bad))
     rows = {s.name: s for s in session.query(Source).all()}
@@ -459,6 +490,10 @@ def build_plan(
             stored = {lbl.lower(): lbl for lbl in labels.values()}
             stored |= {c["label"].lower(): c["label"] for c in places or []}
             e["locations"] = [stored[x.lower()] for x in e["locations"]]
+        if e.get("area"):  # compare by the label as stored
+            stored = {lbl.lower(): lbl for lbl in labels.values()}
+            stored |= {c["label"].lower(): c["label"] for c in places or []}
+            e["area"] = stored[e["area"].lower()]
         refusal = e.pop("refusal", None)
         if refusal:
             plan.warnings[e["name"]] = refusal
@@ -512,6 +547,8 @@ def _write(session: Session, plan: Plan) -> None:
 
 
 def _assign(src: Source, e: dict, ids: dict[str, int]) -> None:
+    if "area" in e:  # absent: unchanged
+        src.area_id = ids[e["area"].lower()] if e["area"] else None
     if "locations" not in e:
         return  # absent: an added source gets every location, an updated one keeps its own
     if e["locations"] == ALL:
@@ -522,7 +559,7 @@ def _assign(src: Source, e: dict, ids: dict[str, int]) -> None:
 
 def _columns(e: dict) -> dict:
     cols = {
-        k: v for k, v in e.items() if k not in ("categories", "tags", "locations")
+        k: v for k, v in e.items() if k not in ("categories", "tags", "locations", "area")
     }  # incl. last_error
     cols["categories"] = json.dumps(e["categories"])
     if "tags" in e:
@@ -555,6 +592,8 @@ def export_yaml(session: Session) -> str:
         e = _current(s, labels)
         if not is_location_aware(s.type or ""):
             del e["locations"]  # a per-venue source searches no area
+        if e["area"] is None:
+            del e["area"]  # absent in the file means unchanged, which is what none is on import
         entries.append(e)
     doc: dict = {}
     if places:

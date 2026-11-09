@@ -164,8 +164,8 @@ def test_an_area_feed_holds_exactly_that_areas_events(world):
 
 def test_the_area_feed_url_is_the_slug_of_the_label(session):
     ny = _location(session, "New York, NY", "00002")
-    _add_source(session, "hall", area_id=ny)
-    _store(session, session.query(Source).one(), "Hall show", 3)
+    hall = _add_source(session, "hall", area_id=ny)
+    _store(session, hall, "Hall show", 3)
     with _client() as c:
         assert _titles(c.get("/feed/area/new-york-ny.ics")) == ["Hall show"]
         assert c.get("/feed/area/New York, NY.ics").status_code == 404
@@ -439,12 +439,13 @@ def test_the_source_form_sets_the_area(world):
         assert r.status_code == 302
         with db.get_session() as s:
             assert s.query(Source).filter_by(name=name).one().area_id == world["Area A"]
-        # an older form without the field leaves it alone; an empty choice clears it
+        # an older form without the field leaves it alone; "No area" clears it
         assert c.post(f"/admin/sources/{name}/update", data=FORM).status_code == 302
         with db.get_session() as s:
             assert s.query(Source).filter_by(name=name).one().area_id == world["Area A"]
         assert (
-            c.post(f"/admin/sources/{name}/update", data={**FORM, "area_id": ""}).status_code == 302
+            c.post(f"/admin/sources/{name}/update", data={**FORM, "area_id": "none"}).status_code
+            == 302
         )
     with db.get_session() as s:
         assert s.query(Source).filter_by(name=name).one().area_id is None
@@ -502,10 +503,13 @@ sources:
 """
 
 
+SEEDED = {"ticketmaster", "eventbrite", "meetup", "fathom"}  # the disabled regional sources
+
+
 def _areas(s) -> dict[str, str | None]:
     labels = {r.id: r.label for r in s.query(SearchLocation)}
     s.expire_all()
-    return {x.name: labels.get(x.area_id) for x in s.query(Source)}
+    return {x.name: labels.get(x.area_id) for x in s.query(Source) if x.name not in SEEDED}
 
 
 def test_import_sets_each_sources_area_by_label(session):
@@ -551,12 +555,12 @@ def test_an_entry_without_area_leaves_the_sources_area_alone(session):
 def test_an_unknown_or_malformed_area_refuses_the_whole_file(session, bad):
     with pytest.raises(sio.ImportRefused):
         sio.run_import(session, DOC.replace("area: Area A", bad), apply=True)
-    assert session.query(Source).count() == 0 and session.query(SearchLocation).count() == 0
+    assert _areas(session) == {} and session.query(SearchLocation).count() == 0
 
 
 def test_the_dry_run_shows_the_area_and_writes_nothing(session):
     plan = sio.run_import(session, DOC, apply=False)
-    assert not plan.applied and session.query(Source).count() == 0
+    assert not plan.applied and _areas(session) == {}
     assert {e["name"]: e.get("area") for e in plan.added} == {
         "hall": "Area A",
         "bar": "Area B",
@@ -580,7 +584,7 @@ def test_the_area_column_is_added_to_an_older_database(tmp_path, monkeypatch):
     con.close()
     db.init_db(path)
     with db.get_session() as s:
-        src = s.query(Source).one()
+        src = s.query(Source).filter_by(name="hall").one()
         assert src.area_id is None
         src.area_id = 1
         s.commit()

@@ -1,0 +1,17 @@
+{# Item 31: the area filter. A plain GET form to the page itself, so the choice is in the URL
+   (?area=<slug>&area=<slug>) and a filtered view can be bookmarked. ``keep`` carries the page's
+   other filters through as hidden fields. Hidden while there are no areas. #}
+{% if area_choices %}
+<form class="filter-row area-filter" method="get" action="{{ form_action }}" aria-label="Filter by area">
+  <span class="area-filter-label">Areas:</span>
+  {% for a in area_choices %}
+  <label class="checkbox-label">
+    <input type="checkbox" name="area" value="{{ a.slug }}" {{ 'checked' if a.checked }}>
+    {{ a.label }}
+  </label>
+  {% endfor %}
+  {% for k, v in keep.items() %}{% if v != '' %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}{% endfor %}
+  <button type="submit" class="btn">Show</button>
+  {% if area_choices | selectattr('checked') | list %}<a class="btn" href="{{ form_action }}{% if keep %}?{{ keep | urlencode }}{% endif %}">All areas</a>{% endif %}
+</form>
+{% endif %}
