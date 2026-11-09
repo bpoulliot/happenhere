@@ -1354,13 +1354,15 @@ locations are allowed and every one is scraped.
   and canary titles use `site_name` (they used `city_name`). The settings page lost its city and
   regional-scraper fields.
 
-**Tests:** `tests/test_search_locations.py` (67), plus item 22's and 29's tests rewritten for the
+**Tests:** `tests/test_search_locations.py` (70), plus item 22's and 29's tests rewritten for the
 location (`test_ticketmaster_regional.py`, `test_meetup_location.py`). A no-network probe (every
 `socket` connect and DNS lookup fails and is recorded; its self-test proves it catches a request)
 shows no lookup leaves the box. **Failing first** (the new tests on `origin/main`'s code): the four
 modules that import `app.locations` / `app.gazetteer` / `SearchArea` fail to import, and 3 tests
 fail (2 digest titles now from `site_name`, the seeded Ticketmaster source no longer warns); the
-other 384 pass. **Mutants**, each failing tests:
+other 384 pass. CodeQL's first PR run flagged the entry parser (`py/polynomial-redos`, twice); fixed
+in code: an entry over 120 characters is refused before any pattern runs, each pattern matches one
+token. **Mutants**, each failing tests:
 
 | Mutant | Failing tests |
 |---|---|
@@ -1369,8 +1371,8 @@ other 384 pass. **Mutants**, each failing tests:
 | the migration gives a regional source every location (double scrape) | 4 |
 | an event's key carries its location (keys move) | 2 (editing the list never moves a key or UID; a migrated source's events keep their keys and UIDs) |
 
-**Image:** +4,478,594 bytes on the same builder (`origin/main` and this branch built locally from
-clean archives): the trimmed files are 2.2 MB, counted twice because the Dockerfile's
+**Image:** +4,479,342 bytes, CI-built `sha-ecf94df` against `sha-9f20720` (`docker image inspect`; the
+local same-builder pair gave +4,478,594): the trimmed files are 2.2 MB, counted twice because the Dockerfile's
 `chown -R /app` layer re-copies everything under `/app` (a `COPY --chown` would not; not changed
 here).
 
