@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from .base import BaseScraper
 
-# Regional aggregators keep their own classes. Eventbrite and Meetup use the configured city;
-# the regional Ticketmaster source carries its own location in its URL (item 22).
+# Regional aggregators keep their own classes. They are location-aware (item 30): the scrape run
+# calls them once per search location assigned to the source (app/jobs.py).
 from .eventbrite import EventbriteScraper
 from .generic import (
     GenericICalScraper,
@@ -69,17 +69,29 @@ DETECTION_TYPE_MAP: dict[str, str] = {
 }
 
 
-def get_scraper(source, config) -> BaseScraper | None:
-    """Instantiate the right scraper for a Source row."""
+def has_type(source_type: str) -> bool:
+    return source_type in _TYPE_MAP
+
+
+def is_location_aware(source_type: str) -> bool:
+    """Whether a type searches an area and so runs once per search location (item 30)."""
+    cls = _TYPE_MAP.get(source_type)
+    return bool(cls is not None and getattr(cls, "LOCATION_AWARE", False))
+
+
+def get_scraper(source, config, location=None) -> BaseScraper | None:
+    """Instantiate the right scraper for a Source row; ``location`` (a ``SearchArea``) is
+    passed to a location-aware type only."""
     cls = _TYPE_MAP.get(source.type)
     if cls is None:
         return None
+    kw = {"location": location} if getattr(cls, "LOCATION_AWARE", False) else {}
 
     # These regional aggregators don't use URL/venue_name from source
     if source.type in ("eventbrite", "meetup", "fathom"):
-        return cls(config)
+        return cls(config, **kw)
 
-    return cls(config, source_url=source.url or "", venue_name=source.display_name or "")
+    return cls(config, source_url=source.url or "", venue_name=source.display_name or "", **kw)
 
 
 def register_type(key: str, cls: type[BaseScraper], label: str) -> None:

@@ -6,7 +6,7 @@
   <div class="admin-stats">
     <span>{{ total_events }} events in DB</span>
     {% if next_scrape %}<span>Next scrape: {{ next_scrape }}</span>{% endif %}
-    {% if city_name %}<span>📍 {{ city_name }}</span>{% endif %}
+    <span>📍 {{ area_names or "no search locations" }}</span>
   </div>
 </div>
 
@@ -22,6 +22,7 @@
   <a href="/admin/sources/new" class="btn btn-primary">+ Add Source</a>
   <button class="btn" hx-post="/admin/scrape-all" hx-target="body" hx-swap="none"
           onclick="this.textContent='Running…';this.disabled=true">▶ Scrape All Now</button>
+  <a href="/admin/locations" class="btn">📍 Locations</a>
   <a href="/admin/settings" class="btn">⚙ Settings</a>
   <a href="/logout" class="btn btn-muted">Sign out</a>
 </div>

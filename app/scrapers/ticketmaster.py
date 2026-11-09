@@ -1,9 +1,11 @@
 """Ticketmaster through the Discovery API: the pager (item 12) and the regional source (item 22).
 
-A regional ``ticketmaster`` source carries its own location in its URL, never the key:
-``https://app.ticketmaster.com/discovery/v2/events?latlong=<lat>,<lon>&radius=<n>&unit=miles``.
-Two areas are two sources. ``postalCode`` is not used: with it the API returns only the events
-at venues inside that ZIP and ignores ``radius``.
+A regional ``ticketmaster`` source searches the search locations assigned to it (item 30): it is
+location-aware, so the scrape run calls it once per location, and each search is
+``latlong=<lat>,<lon>&radius=<n>&unit=<miles|km>`` from that location. Its URL carries no area
+any more (item 22 kept the area in the URL; ``app/locations.migrate`` moves such a URL's area to a
+location of its own). ``postalCode`` is not used: with it the API returns only the events at
+venues inside that ZIP and ignores ``radius``.
 
 Discovery returns at most 1,000 results per query, so a regional scrape runs over date windows:
 the look-ahead is split into ``WINDOW_DAYS`` windows, a window whose ``page.totalElements`` is
@@ -46,11 +48,13 @@ MAX_REQUESTS_PER_SCRAPE = 100  # hard ceiling on requests in one scrape of one s
 _UNITS = ("miles", "km")
 
 # Fixed text (no request data, no exception text): the admin form, the import and the scraper.
-LOCATION_MISSING = (
-    "A regional Ticketmaster source needs its location in its URL: "
-    "https://app.ticketmaster.com/discovery/v2/events?latlong=<lat>,<lon>&radius=<n>&unit=miles "
-    "(latlong and radius required; unit miles or km; never the apikey)."
+LOCATION_IN_URL = (
+    "A regional Ticketmaster source takes its areas from the search locations (Admin > "
+    "Locations), not from its URL: use https://app.ticketmaster.com/discovery/v2/events with no "
+    "latlong, radius, unit or postalCode, and add the area as a location."
 )
+NO_COORDINATES = "This search location has no coordinates: edit it (Admin > Locations)."
+_AREA_PARAMS = ("latlong", "radius", "unit", "postalcode", "geopoint")
 
 # Indirections the tests replace: no test sleeps or depends on the wall clock.
 _sleep = time.sleep
@@ -153,8 +157,26 @@ def regional_location(url: str) -> dict[str, str] | None:
 
 
 def location_problem(url: str) -> str | None:
-    """The fixed refusal text when ``url`` carries no usable location, else ``None``."""
-    return None if regional_location(url) else LOCATION_MISSING
+    """The fixed refusal text when ``url`` still carries an area of its own (item 30), else None.
+
+    The area is a search location now; ``regional_location`` reads an old URL's area for the
+    migration only.
+    """
+    q = {k.lower() for k in parse_qs(urlparse(url or "").query)}
+    return LOCATION_IN_URL if q & set(_AREA_PARAMS) else None
+
+
+def area_params(location) -> dict[str, str]:
+    """The Discovery area query of a search location (``app.scrapers.base.SearchArea``)."""
+    if location is None:
+        raise ValueError("no search location")
+    if location.lat is None or location.lon is None:
+        raise ValueError(NO_COORDINATES)
+    return {
+        "latlong": f"{location.lat},{location.lon}",
+        "radius": location.radius_text,
+        "unit": location.unit,
+    }
 
 
 # --- Date windows -----------------------------------------------------------------------------
@@ -209,14 +231,18 @@ class _PacedClient:
 
 
 class TicketmasterScraper(BaseScraper):
-    """The regional source: every event within the URL's ``radius`` of its ``latlong``."""
+    """The regional source: every event within one search location's radius (item 30)."""
 
     SOURCE_TYPE = "api"
+    LOCATION_AWARE = True
 
-    def __init__(self, config, source_url: str = "", venue_name: str = ""):
+    def __init__(self, config, source_url: str = "", venue_name: str = "", location=None):
         super().__init__(config)
         self.SOURCE_NAME = venue_name or "ticketmaster"
+        if location is not None:
+            self.SOURCE_NAME = f"{self.SOURCE_NAME} [{location.label}]"
         self.source_url = source_url
+        self.location = location
         self.warnings: list[str] = []  # stored as the source's last_error by app.jobs
         self.incomplete = False  # True: some events were not read, so nothing retires
         self.windows: list[dict] = []  # one record per request window: the probe's evidence
@@ -232,9 +258,7 @@ class TicketmasterScraper(BaseScraper):
         self.incomplete = True
 
     def scrape(self) -> list[EventData]:
-        loc = regional_location(self.source_url)
-        if loc is None:
-            raise ValueError(LOCATION_MISSING)
+        loc = area_params(self.location)
         key = self.config.ticketmaster_api_key
         if not key:
             raise ValueError("TICKETMASTER_API_KEY is not set")

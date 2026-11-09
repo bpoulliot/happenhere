@@ -8,7 +8,7 @@ import logging
 import httpx
 import pytest
 
-from app import config, db, main
+from app import config, db, locations, main
 from app.config import Config
 from app.jobs import run_all_scrapers
 from app.logredact import redact
@@ -42,16 +42,17 @@ def logs():
 @pytest.fixture
 def tm_run(monkeypatch, tmp_path):
     db.init_db(tmp_path / "logs.db")
-    cfg = Config(ticketmaster_api_key=KEY, city_zip="00000")
+    cfg = Config(ticketmaster_api_key=KEY)
     monkeypatch.setattr(config, "_cfg", cfg)
     monkeypatch.setattr("app.jobs.get_config", lambda: cfg)
     with db.get_session() as s:
+        locations.add(s, label="Area", entry="12.5,-45.25", radius=25, unit="miles")
         s.add(
             Source(
                 name="tm",
                 display_name="TM",
                 type="ticketmaster",
-                url="https://app.ticketmaster.com/discovery/v2/events?latlong=12.5,-45.25&radius=25",
+                url="https://app.ticketmaster.com/discovery/v2/events",
                 enabled=True,
             )
         )

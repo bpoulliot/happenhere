@@ -49,7 +49,7 @@ def env(monkeypatch, tmp_path):
         ntfy_url="https://ntfy.example.com",
         ntfy_topic="events",
         tz="UTC",
-        city_name="Exampleton",
+        site_name="Exampleton",
         public_url="https://events.example.com",
         secret_key="k" * 64,
     )

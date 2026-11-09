@@ -58,7 +58,7 @@ item that is not READY.
 | 27 | 1 | A second show of a day (stored under `timed_hash`) whose time moves gets a new row and UID (item 15) | **NEEDS DECISION** |
 | 28 | 0 | One show listed twice in one batch under two ids (same title, venue and exact start) is one event | **DONE** |
 | 29 | 0 | No deployment location in the repository: example values, a default Meetup location, test addresses | **DONE** |
-| 30 | 1 | Search locations: one or more ZIP / city / lat-long areas with a radius, resolved offline; location-aware types fan out per area | **READY** |
+| 30 | 1 | Search locations: one or more ZIP / city / lat-long areas with a radius, resolved offline; location-aware types fan out per area | **DONE** |
 | 31 | 1 | Area feeds: each search location is an area; `/feed/area/<label>.ics` and an area filter on the events page | **READY** (after 30) |
 
 ### 01 — Green CI and safety fixes — DONE
@@ -1291,7 +1291,7 @@ predecessor project's name where it explains that suffix or the Chromium leak.
 **Failing first** (`tests/test_meetup_location.py` against `origin/main`): the unconfigured-source
 test failed (the scraper reached Chromium with the built-in city); the configured-location test passed.
 
-### 30 — Search locations — READY
+### 30 — Search locations — DONE
 
 **Owner's spec (2026-11-09).** The admin keeps a list of one or more **search locations**. Each is
 entered as a US ZIP code or a US city name (with its state), or as latitude/longitude by hand
@@ -1322,6 +1322,68 @@ locations are allowed and every one is scraped.
   old settings into one location; no request carries a lookup to a geocoding service.
 * **Open, not blocking:** the trimmed files' size in the image (a few MB as text; measure at build);
   refreshing them with each yearly Census release is a manual rebuild.
+
+**Built (2026-11-09).**
+* **The list:** `app/locations.py`, Admin > Locations (`/admin/locations`: add, edit, delete), and
+  `locations:` in the import file (keyed by label, added or updated, never deleted). Each location
+  stores what was typed, the coordinates and place it resolved to, a radius (1-500) and its unit
+  (miles or km), and optional per-platform values (a Meetup location, an Eventbrite region) that
+  win over the ones derived from the place. A refused entry gets fixed text per reason.
+* **Offline lookup:** `app/gazetteer.py` over `app/geodata/` (US Census Bureau **2026** Gazetteer
+  Files, ZCTA + Places, public domain; download URLs, checksums and the refresh recipe in
+  `app/geodata/SOURCE.md`; trimmed by `scripts/gazetteer_trim.py`). `GAZETTEER_DIR` overrides the
+  directory (the tests point it at `tests/fixtures/gazetteer`). A ZIP+4 resolves as its ZIP;
+  "Saint"/"St." and a place's short names ("Nashville" for "Nashville-Davidson") resolve.
+* **Fan-out:** a scraper class with `LOCATION_AWARE = True` (Ticketmaster regional, Eventbrite,
+  Meetup; a plugin may set it) takes `location=` (`SearchArea`) and runs once per location assigned
+  to its source. `Source.location_ids`: NULL = every location (the default), a list = exactly those,
+  so two regional sources can each keep their own area. The searches merge into one batch; an event
+  two locations return is one row, linked to both (`event_locations`, for item 31). A failed search
+  costs only its own location's events: the rest are stored, nothing retires, the source reports it.
+  An empty list, or a source assigned none, searches nothing and records why (`last_error`).
+* **Keys do not move:** an identity key is `sha256(source name, kind, value)` (`app/dedup.py`),
+  never a location, so adding, renaming or re-entering a location never changes a feed UID.
+* **Migration** (`locations.migrate`, every start, idempotent): the old `city_zip` / `city_name` /
+  `city_radius_miles` / `eventbrite_region` / `meetup_location` become one location, once (label
+  `city_name` or "Default"); a regional `ticketmaster` URL's `latlong`/`radius`/`unit` becomes a
+  location assigned to that source alone (an existing location with the same point, radius and
+  unit is reused), and the URL keeps only its scheme, host and path. A fresh database creates no
+  location. The import and the admin form now refuse an enabled regional URL that still carries an
+  area (`LOCATION_IN_URL`); a disabled one is stored with the warning (item 24's rule).
+* **Display:** the events page heading and the admin header list the location labels; the digest
+  and canary titles use `site_name` (they used `city_name`). The settings page lost its city and
+  regional-scraper fields.
+
+**Tests:** `tests/test_search_locations.py` (67), plus item 22's and 29's tests rewritten for the
+location (`test_ticketmaster_regional.py`, `test_meetup_location.py`). A no-network probe (every
+`socket` connect and DNS lookup fails and is recorded; its self-test proves it catches a request)
+shows no lookup leaves the box. **Failing first** (the new tests on `origin/main`'s code): the four
+modules that import `app.locations` / `app.gazetteer` / `SearchArea` fail to import, and 3 tests
+fail (2 digest titles now from `site_name`, the seeded Ticketmaster source no longer warns); the
+other 384 pass. **Mutants**, each failing tests:
+
+| Mutant | Failing tests |
+|---|---|
+| fan-out ignores the source's location assignment | 4 (assigned-only, two sources each their own area, assigned none, migrated source searches what its URL did) |
+| the migration drops a source's radius (default 25) | 3 |
+| the migration gives a regional source every location (double scrape) | 4 |
+| an event's key carries its location (keys move) | 2 (editing the list never moves a key or UID; a migrated source's events keep their keys and UIDs) |
+
+**Image:** +4,478,594 bytes on the same builder (`origin/main` and this branch built locally from
+clean archives): the trimmed files are 2.2 MB, counted twice because the Dockerfile's
+`chown -R /app` layer re-copies everything under `/app` (a `COPY --chown` would not; not changed
+here).
+
+**Findings, not fixed here:**
+* **Nearest is not "in"** (fixed in this item, recorded for the next refresh): naming a point by the
+  nearest place's internal point picked a small enclave over the city around it. The Places file
+  has no outlines; `nearest_place` takes the largest place whose equal-area circle contains the
+  point, else the nearest, which is why `places.tsv` keeps the land area (a sixth column beyond the
+  five the spec listed).
+* **Meetup and Eventbrite ignore the radius.** Eventbrite's region page takes none; Meetup keeps its
+  fixed `distance=tenMiles` (its distance values were not verified against the live site, and a test
+  never fetches it). Both build their search from the location's city and state, or its own value.
+* **Refreshing the Gazetteer is manual** (each yearly release): `app/geodata/SOURCE.md`.
 
 ### 31 — Area feeds — READY (after 30)
 

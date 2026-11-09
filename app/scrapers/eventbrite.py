@@ -1,10 +1,16 @@
-"""Eventbrite CS events — scroll-loaded React app, parse div.event-card containers."""
+"""Eventbrite regional events: a scroll-loaded React app, parsed from div.event-card containers.
+
+Location-aware (item 30): one search per search location, at
+``eventbrite.com/d/<state>--<city-slug>/events/`` from the location's city (or the location's own
+``eventbrite_region``). The site takes no radius: the location's radius is not used.
+"""
 
 from __future__ import annotations
 
 import logging
 import re
 import time
+import unicodedata
 from datetime import datetime
 
 from bs4 import BeautifulSoup
@@ -15,7 +21,18 @@ from .base import EventData
 log = logging.getLogger(__name__)
 
 _URL_TPL = "https://www.eventbrite.com/d/{region}/events/"
-_VENUE = ""  # set from config
+MISSING_LOCATION = (
+    "Eventbrite needs a search location in the US (a ZIP code or a city), "
+    "or the location's own Eventbrite region: nothing to search"
+)
+
+
+def region_slug(city: str, state: str) -> str:
+    """``"ca--sample-city"`` for Sample City, CA: the site's region path."""
+    s = unicodedata.normalize("NFKD", city).encode("ascii", "ignore").decode().lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    return f"{state.lower()}--{s}" if s and state else ""
+
 
 # Date text: "Mon, Jun 8" or "Sat, Jun 13 • 7:00 PM"
 _DATE_RE = re.compile(r"(?:\w+,\s+)?(\w+)\s+(\d+)(?:\s*[•·]\s*(\d{1,2}:\d{2}\s*(?:AM|PM)))?", re.I)
@@ -23,10 +40,25 @@ _DATE_RE = re.compile(r"(?:\w+,\s+)?(\w+)\s+(\d+)(?:\s*[•·]\s*(\d{1,2}:\d{2}\
 
 class EventbriteScraper(PlaywrightScraper):
     SOURCE_NAME = "eventbrite"
+    LOCATION_AWARE = True
+
+    def __init__(self, config, location=None):
+        super().__init__(config)
+        self.location = location
+
+    def _region(self) -> str:
+        loc = self.location
+        if loc is None:
+            return ""
+        return loc.eventbrite_region or region_slug(loc.city, loc.state)
 
     def _get_url(self) -> str:
-        region = getattr(self.config, "eventbrite_region", "") or "events"
-        return _URL_TPL.format(region=region)
+        return _URL_TPL.format(region=self._region())
+
+    def scrape(self) -> list[EventData]:
+        if not self._region():  # refuse before Chromium starts (as item 29 did for Meetup)
+            raise ValueError(MISSING_LOCATION)
+        return super().scrape()
 
     def _scrape_impl(self) -> list[EventData]:
         events: list[EventData] = []
@@ -76,7 +108,7 @@ class EventbriteScraper(PlaywrightScraper):
                 EventData(
                     title=title,
                     start_dt=start_dt,
-                    venue_name=self.config.city_name or "Events",
+                    venue_name=self.location.label if self.location else "Events",
                     url=url,
                     image_url=img_src,
                     categories=[],

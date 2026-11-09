@@ -57,7 +57,7 @@ def env(monkeypatch, tmp_path):
         ntfy_url="https://ntfy.example.com",
         ntfy_topic="events",
         tz="UTC",
-        city_name="Exampleton",
+        site_name="Exampleton",  # the digest title's name (item 30: no longer a city setting)
         public_url="https://events.example.com",
         secret_key="k" * 64,
     )
@@ -292,7 +292,7 @@ def test_a_new_event_past_the_line_cap_still_counts_as_new(env):
 
 
 def test_the_title_is_singular_for_one_event_and_has_a_fallback_name(env):
-    env.city_name = ""
+    env.site_name = ""
     add_event("a", datetime(2026, 11, 6, 19, 0))
     assert run(MON) == "sent"
     assert env.fake.calls[0]["title"] == "HappenHere — 1 event in the next 14 days"
@@ -374,7 +374,6 @@ def admin(env, monkeypatch):
 
 
 SETTINGS = {
-    "city_name": "Exampleton",
     "scrape_interval_hours": "6",
     "tz": "UTC",
     "ntfy_url": "https://ntfy.example.com",

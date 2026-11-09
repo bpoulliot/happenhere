@@ -2,8 +2,9 @@
 
 ## Overview
 
-Generic local events aggregator. Users configure a city ZIP, add event sources
-via the admin UI, and the app scrapes + aggregates events from those sources.
+Generic local events aggregator. Users add search locations (a US ZIP code, a US city and state,
+or latitude/longitude, each with a radius) and event sources via the admin UI, and the app scrapes +
+aggregates events from those sources.
 
 ## Stack
 
@@ -37,6 +38,19 @@ Conventional Commits: `feat:`, `fix:`, `chore:`, `refactor:`.
 - Playwright only through `PlaywrightScraper` (launch and close on one thread).
 - No Alembic — use `create_all` + `_migrate_schema` pattern (see `app/db.py`).
 
+## Search locations (item 30)
+
+- `app/locations.py` keeps the list (Admin > Locations, or `locations:` in the import file below).
+  A ZIP code or city resolves **offline** from the bundled US Census Gazetteer (`app/gazetteer.py`,
+  data in `app/geodata/`, vintage and source in its `SOURCE.md`, refreshed by
+  `scripts/gazetteer_trim.py`). No lookup leaves the server; tests use `tests/fixtures/gazetteer`.
+- A scraper class with `LOCATION_AWARE = True` takes `location=` (a `SearchArea`) and runs once per
+  location assigned to its source (`Source.location_ids`: NULL = every location, a list = exactly
+  those). `app/jobs.py` merges the searches into one batch and links each event row to the
+  locations that returned it (`event_locations`). A per-venue type does not fan out.
+- An identity key never contains a location: editing the list must never move a feed UID.
+- No location ships. A fresh install searches nothing until one is added.
+
 ## Source import/export
 
 A deployment keeps its source list in a YAML file outside this repo and loads it with:
@@ -56,7 +70,8 @@ refusal as its `last_error` and a warning in the plan (enabling it re-runs the g
 ## Adding a New Scraper
 
 1. Create `app/scrapers/generic.py` or a new file implementing `BaseScraper`.
-2. Constructor must accept `config`, `source_url`, and `venue_name`.
+2. Constructor must accept `config`, `source_url`, and `venue_name` (and `location`, if the class
+   sets `LOCATION_AWARE = True`: item 30).
 3. Add to `_TYPE_MAP` in `app/scrapers/registry.py` with a unique type key.
 4. Add a label to `TYPE_LABELS` in registry.py.
 

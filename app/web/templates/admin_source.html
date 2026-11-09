@@ -57,6 +57,25 @@
                placeholder="e.g. music, downtown">
         <small>Each tag is a calendar feed: /feed/tags/music.ics, or /feed/tags/music+downtown.ics for sources with both</small>
       </div>
+      <div class="form-group" id="locations-group">
+        <label>Search locations</label>
+        {% set assigned = source.location_ids if source else none %}
+        <label class="checkbox-label">
+          <input type="radio" name="locations_mode" value="all" {{ 'checked' if assigned is none }}>
+          Every location{% if not locations %} (none yet: <a href="/admin/locations">add one</a>){% endif %}
+        </label>
+        <label class="checkbox-label">
+          <input type="radio" name="locations_mode" value="selected" {{ 'checked' if assigned is not none }}>
+          Only these:
+        </label>
+        {% for loc in locations %}
+        <label class="checkbox-label" style="margin-left:1.5rem">
+          <input type="checkbox" name="location_ids" value="{{ loc.id }}" {{ 'checked' if assigned is not none and loc.id in assigned }}>
+          {{ loc.label }}
+        </label>
+        {% endfor %}
+        <small>Used by the types that search an area: the source runs once per location. <a href="/admin/locations">Manage locations</a></small>
+      </div>
       <div class="form-group">
         <label class="checkbox-label">
           <input type="checkbox" name="enabled" value="on" {{ 'checked' if not source or source.enabled }}>
@@ -78,17 +97,19 @@ const typeHints = {
   spothopper: "URL of the SpotHopper-powered events page",
   squarespace: "URL of the Squarespace events page (stacked layout)",
   playwright_jsonld: "URL of a JS-heavy events page that publishes JSON-LD after rendering",
-  ticketmaster: "A Discovery URL with the area to search: https://app.ticketmaster.com/discovery/v2/events?latlong=<lat>,<lon>&radius=<n>&unit=miles (never the apikey). One source per area. Needs TICKETMASTER_API_KEY.",
+  ticketmaster: "https://app.ticketmaster.com/discovery/v2/events, with no area in it: the areas are the search locations below. Needs TICKETMASTER_API_KEY.",
   ticketmaster_venue: "A Discovery URL (https://app.ticketmaster.com/discovery/v2/events?venueId=<id>[,<id>]) or a ticketmaster.com /venue/<number> page, looked up once on save. Needs TICKETMASTER_API_KEY.",
-  eventbrite: "No URL needed — uses your Eventbrite region from Settings",
-  meetup: "No URL needed — uses your Meetup location from Settings",
+  eventbrite: "No URL needed — searches each search location's city",
+  meetup: "No URL needed — searches each search location's city",
   fathom: "No URL needed — scrapes fathomentertainment.com/releases/",
 };
 const noUrlTypes = new Set(["eventbrite","meetup","fathom"]);
+const locationTypes = new Set({{ location_aware_types | tojson }});
 
 function updateTypeHint() {
   const t = document.getElementById('scraper-type').value;
   document.getElementById('url-hint').textContent = typeHints[t] || '';
+  document.getElementById('locations-group').style.display = locationTypes.has(t) ? '' : 'none';
   const urlGroup = document.getElementById('url-group');
   urlGroup.style.opacity = noUrlTypes.has(t) ? '0.4' : '1';
   urlGroup.querySelector('input').disabled = noUrlTypes.has(t);

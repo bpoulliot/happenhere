@@ -1,4 +1,8 @@
-"""Item 22: the regional ``ticketmaster`` source carries its own location and pages past the cap.
+"""Item 22: the regional ``ticketmaster`` source searches an area and pages past the cap.
+
+Since item 30 the area is a search location (``SearchArea``), passed per search; a URL that still
+carries ``latlong``/``radius`` (item 22's form) is read only by the migration and is refused by
+the import and the admin form.
 
 Every response comes from a fake Discovery API behind ``httpx.MockTransport``: no test reaches
 Ticketmaster. Coordinates are made up (no real place), ids and names invented.
@@ -16,10 +20,11 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app import auth, config, db, jobs, main, oidc
+from app import auth, config, db, jobs, locations, main, oidc
 from app.config import Config
 from app.models import Event, Source
 from app.scrapers import ticketmaster
+from app.scrapers.base import SearchArea
 from app.scrapers.registry import get_scraper
 from app.sources import ImportRefused, run_import
 
@@ -121,20 +126,39 @@ def _cfg(**kw) -> Config:
     return Config(ticketmaster_api_key=KEY, feed_lookahead_days=365, tz="UTC", **kw)
 
 
+def _area(url: str) -> SearchArea | None:
+    """The search location item 30's migration makes of an item-22 URL."""
+    loc = ticketmaster.regional_location(url)
+    if loc is None:
+        return None
+    lat, lon = (float(x) for x in loc["latlong"].split(","))
+    return SearchArea(
+        id=1, label="Area", lat=lat, lon=lon, radius=float(loc["radius"]), unit=loc["unit"]
+    )
+
+
 def _scraper(url: str = URL_A, cfg: Config | None = None):
-    return ticketmaster.TicketmasterScraper(cfg or _cfg(), source_url=url, venue_name="Regional")
+    return ticketmaster.TicketmasterScraper(
+        cfg or _cfg(), source_url=API, venue_name="Regional", location=_area(url)
+    )
 
 
-# --- the location lives in the source URL --------------------------------------------------
+# --- an item-22 URL's area, and the URL a source keeps now ---------------------------------
 
 
-def test_the_location_is_read_from_the_url():
+def test_an_old_urls_area_is_still_read_for_the_migration():
     assert ticketmaster.regional_location(URL_A) == {
         "latlong": "12.5,-45.25",
         "radius": "25",
         "unit": "miles",
     }
-    assert ticketmaster.location_problem(URL_A) is None
+
+
+def test_a_url_with_an_area_is_refused_and_the_bare_url_is_not():
+    assert ticketmaster.location_problem(URL_A) == ticketmaster.LOCATION_IN_URL
+    assert ticketmaster.location_problem(f"{API}?postalCode=00000") == ticketmaster.LOCATION_IN_URL
+    assert ticketmaster.location_problem(API) is None
+    assert ticketmaster.location_problem("") is None
 
 
 @pytest.mark.parametrize(
@@ -153,14 +177,11 @@ def test_the_location_is_read_from_the_url():
         f"{API}?latlong=12.5,-45.25&radius=25&apikey={KEY}",  # never the key
     ],
 )
-def test_a_url_without_a_usable_location_is_a_problem(url):
+def test_a_url_without_a_usable_area_gives_the_migration_nothing(url):
     assert ticketmaster.regional_location(url) is None
-    msg = ticketmaster.location_problem(url)
-    assert msg and "latlong" in msg and "radius" in msg
-    assert KEY not in msg
 
 
-def test_the_scraper_uses_the_url_location_never_the_global_zip(fake):
+def test_the_scraper_searches_its_location_never_the_old_global_zip(fake):
     fake.events = {"12.5,-45.25": _spread("a", 3, T0 + timedelta(days=2), timedelta(days=5))}
     events = _scraper(cfg=_cfg(city_zip="00000", city_radius_miles=75)).scrape()
     assert len(events) == 3
@@ -169,9 +190,12 @@ def test_the_scraper_uses_the_url_location_never_the_global_zip(fake):
     assert {r["unit"] for r in fake.requests} == {"miles"}
 
 
-def test_an_enabled_source_without_a_location_refuses_to_scrape(fake):
-    with pytest.raises(ValueError, match="latlong"):
+def test_a_scrape_without_a_location_or_its_coordinates_refuses(fake):
+    with pytest.raises(ValueError):
         _scraper(url=API).scrape()
+    no_coords = SearchArea(id=1, label="Area", lat=None, lon=None, radius=25, unit="miles")
+    with pytest.raises(ValueError, match="no coordinates"):
+        ticketmaster.TicketmasterScraper(_cfg(), source_url=API, location=no_coords).scrape()
     assert fake.requests == []
 
 
@@ -301,6 +325,8 @@ def stored(monkeypatch, tmp_path):
     with db.get_session() as s:
         s.add(Source(name="tm", display_name="Regional", type="ticketmaster", url=URL_A))
         s.commit()
+        locations.migrate(s, cfg)  # item 30: the URL's area becomes the source's location
+        s.commit()
 
 
 def _source() -> Source:
@@ -377,27 +403,27 @@ def session(tmp_path):
         yield s
 
 
-def test_import_refuses_an_enabled_regional_entry_without_a_location(session):
+def test_import_refuses_an_enabled_regional_entry_with_an_area_in_its_url(session):
     with pytest.raises(ImportRefused) as exc:
-        run_import(session, _doc(API, True), apply=True)
-    assert "latlong" in str(exc.value) and "radius" in str(exc.value)
+        run_import(session, _doc(URL_A, True), apply=True)
+    assert ticketmaster.LOCATION_IN_URL in str(exc.value)
     assert session.query(Source).filter_by(name="tm-a").count() == 0
 
 
-def test_import_stores_a_disabled_regional_entry_without_a_location_with_a_warning(session):
-    plan = run_import(session, _doc("", False), apply=True)
-    assert "tm-a" in plan.warnings and "latlong" in plan.warnings["tm-a"]
+def test_import_stores_a_disabled_one_with_a_warning_until_its_url_is_bare(session):
+    plan = run_import(session, _doc(URL_A, False), apply=True)
+    assert plan.warnings.get("tm-a", "").endswith(ticketmaster.LOCATION_IN_URL)
     row = session.query(Source).filter_by(name="tm-a").one()
-    assert row.enabled is False and "latlong" in (row.last_error or "")
-    # Given a location later, the import clears its own record.
-    plan = run_import(session, _doc(URL_A, True), apply=True)
+    assert row.enabled is False and ticketmaster.LOCATION_IN_URL in (row.last_error or "")
+    # Given the bare URL later, the import clears its own record.
+    plan = run_import(session, _doc(API, True), apply=True)
     session.expire_all()
     row = session.query(Source).filter_by(name="tm-a").one()
     assert row.enabled is True and row.last_error is None and not plan.warnings
 
 
-def test_import_takes_an_enabled_regional_entry_with_a_location(session):
-    plan = run_import(session, _doc(URL_A, True), apply=True)
+def test_import_takes_an_enabled_regional_entry_with_the_bare_url(session):
+    plan = run_import(session, _doc(API, True), apply=True)
     assert not plan.warnings and len(plan.added) == 1
 
 
@@ -429,35 +455,34 @@ def _form(url: str, enabled: str = "on") -> dict:
     }
 
 
-def test_the_form_refuses_an_enabled_regional_source_without_a_location(client):
+def test_the_form_refuses_an_enabled_regional_source_with_an_area_in_its_url(client):
     with client as http:
-        r = http.post("/admin/sources", data=_form(API))
-    assert r.status_code == 400 and "latlong" in r.text and "radius" in r.text
+        r = http.post("/admin/sources", data=_form(URL_A))
+    assert r.status_code == 400 and r.text == ticketmaster.LOCATION_IN_URL
     with db.get_session() as s:
         assert s.query(Source).filter_by(display_name="Regional A").count() == 0
 
 
 def test_the_form_stores_a_disabled_one_and_the_toggle_refuses_to_enable_it(client):
     with client as http:
-        r = http.post("/admin/sources", data=_form(API, enabled="off"))
+        r = http.post("/admin/sources", data=_form(URL_A, enabled="off"))
         assert r.status_code == 302
         with db.get_session() as s:
             row = s.query(Source).filter_by(display_name="Regional A").one()
             name, err = row.name, row.last_error
-        assert "latlong" in (err or "")
+        assert ticketmaster.LOCATION_IN_URL in (err or "")
         r = http.post(f"/admin/sources/{name}/toggle")
-        assert r.status_code == 400 and "latlong" in r.text
-        r = http.post(f"/admin/sources/{name}/update", data=_form(URL_A))
+        assert r.status_code == 400 and r.text == ticketmaster.LOCATION_IN_URL
+        r = http.post(f"/admin/sources/{name}/update", data=_form(API))
         assert r.status_code == 302
     with db.get_session() as s:
         row = s.query(Source).filter_by(name=name).one()
-        assert row.enabled and row.url == URL_A and row.last_error is None
+        assert row.enabled and row.url == API and row.last_error is None
 
 
 def test_the_form_shows_the_regional_url_form(client):
     with client as http:
         r = http.get("/admin/sources/new")
     assert r.status_code == 200, r.text[:300]
-    assert "latlong=&lt;lat&gt;,&lt;lon&gt;" in r.text or "latlong=<lat>,<lon>" in r.text
-    assert "radius=" in r.text
-    assert "uses your city ZIP" not in r.text
+    assert "with no area in it" in r.text and "Search locations" in r.text
+    assert "latlong=&lt;lat&gt;" not in r.text and "latlong=<lat>" not in r.text
