@@ -29,7 +29,7 @@ from app import auth, config, db, gazetteer, jobs, locations, main, oidc
 from app import sources as sio
 from app.config import Config
 from app.dedup import identity_key, upsert_events
-from app.models import Event, EventLocation, SearchLocation, Source
+from app.models import AppMeta, Event, EventLocation, SearchLocation, Source
 from app.scrapers import eventbrite, meetup, registry, ticketmaster
 from app.scrapers.base import BaseScraper, EventData, SearchArea
 
@@ -107,7 +107,7 @@ def test_the_tests_read_the_synthetic_gazetteer_never_the_bundled_one():
 
 
 def test_the_bundled_files_and_their_source_record_ship_with_the_app():
-    real = Path(gazetteer.__file__).parent / "data" / "gazetteer"
+    real = Path(gazetteer.__file__).parent / "geodata"
     assert (real / "zcta.tsv").stat().st_size > 100_000  # stat only: their contents stay unread
     assert (real / "places.tsv").stat().st_size > 100_000
     record = (real / "SOURCE.md").read_text()
@@ -471,7 +471,14 @@ def test_deleting_a_location_takes_it_out_of_every_assignment(api):
 
 
 AREA = SearchArea(
-    id=1, label="Area A", lat=11.0, lon=-21.0, radius=25, unit="miles", city="Sample City", state="CA"
+    id=1,
+    label="Area A",
+    lat=11.0,
+    lon=-21.0,
+    radius=25,
+    unit="miles",
+    city="Sample City",
+    state="CA",
 )
 
 
@@ -499,8 +506,10 @@ def test_a_locations_own_meetup_and_eventbrite_values_win():
         eventbrite_region="ny--exampleton",
     )
     assert "location=us--ny--Exampleton" in meetup.MeetupScraper(Config(), location=area)._get_url()
-    assert eventbrite.EventbriteScraper(Config(), location=area)._get_url().endswith(
-        "/d/ny--exampleton/events/"
+    assert (
+        eventbrite.EventbriteScraper(Config(), location=area)
+        ._get_url()
+        .endswith("/d/ny--exampleton/events/")
     )
 
 
@@ -572,6 +581,8 @@ def _old_style(tmp_path, monkeypatch, *urls: tuple[str, str]) -> None:
     with db.get_session() as s:
         for name, url in urls:
             s.add(Source(name=name, display_name=name, type="ticketmaster", url=url, enabled=True))
+        # Before item 30 nothing was migrated: no mark, so the next start migrates the settings.
+        s.query(AppMeta).filter_by(key=locations.META_MIGRATED).delete()
         s.commit()
 
 

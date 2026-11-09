@@ -7,33 +7,28 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from .models import AppMeta, Base
-from .scrapers.ticketmaster import LOCATION_MISSING
-from .sources import LOCATION_MISSING_MARK
 
 log = logging.getLogger(__name__)
 
 _engine = None
 _SessionLocal = None
 
-# Regional aggregator sources seeded on first run, all disabled. Eventbrite and Meetup use the
-# configured city; the Ticketmaster one needs its area in its URL (latlong + radius, item 22)
-# before it can be enabled. Users enable/disable in the UI.
+# Regional aggregator sources seeded on first run, all disabled. They are location-aware
+# (item 30): each runs once per search location, and a fresh install has none, so they do
+# nothing until the admin adds a location. Users enable/disable in the UI.
 _SEED_REGIONAL: list[dict] = [
     {
         "name": "ticketmaster",
         "display_name": "Ticketmaster",
         "type": "ticketmaster",
         "url": "https://app.ticketmaster.com/discovery/v2/events",
-        "enabled": False,  # needs the API key and an area in the URL (latlong + radius)
-        # What an import or the admin form would record for this URL (app.sources), so a fresh
-        # database exports and re-imports unchanged.
-        "last_error": LOCATION_MISSING_MARK + LOCATION_MISSING,
+        "enabled": False,  # needs the API key and a search location
     },
     {
         "name": "eventbrite",
         "display_name": "Eventbrite",
         "type": "eventbrite",
-        "url": "",  # URL set dynamically from city config
+        "url": "",  # the region comes from each search location
         "enabled": False,
     },
     {
@@ -87,6 +82,7 @@ def _migrate_schema(engine) -> None:
             "empty_runs": "INTEGER DEFAULT 0",
             "error_runs": "INTEGER DEFAULT 0",
             "canary_alerted_at": "DATETIME",
+            "location_ids": "TEXT",  # item 30
         }.items():
             if col not in source_cols:
                 conn.execute(text(f"ALTER TABLE sources ADD COLUMN {col} {typ}"))
@@ -117,6 +113,11 @@ def init_db(db_path: str | Path | None = None) -> None:
     _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False)
     with _SessionLocal() as s:
         _seed_regional(s)
+    with _SessionLocal() as s:
+        from .locations import migrate
+
+        migrate(s, get_config())  # item 30: old location settings and URL areas -> locations
+        s.commit()
     log.info("Database initialised at %s", path)
 
 

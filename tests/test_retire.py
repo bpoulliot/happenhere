@@ -261,7 +261,7 @@ def app_env(monkeypatch, tmp_path):
         password_hash=auth.hash_password("pw"),
         ntfy_url="https://ntfy.example.com",
         ntfy_topic="events",
-        city_name="Exampleton",
+        site_name="Exampleton",
     )
     monkeypatch.setattr(config, "_cfg", cfg)
     monkeypatch.setattr(config, "load_config", lambda: cfg)

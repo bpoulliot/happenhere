@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Query, Session, relationship
 
 
@@ -30,8 +30,51 @@ class Source(Base):
     empty_runs = Column(Integer, default=0)
     error_runs = Column(Integer, default=0)
     canary_alerted_at = Column(DateTime)
+    # Item 30: the search locations a location-aware source runs over, a JSON list of
+    # ``search_locations.id``. NULL = every location (the default); ``[]`` = none.
+    location_ids = Column(Text)
 
     events = relationship("Event", back_populates="source")
+
+
+class SearchLocation(Base):
+    """Item 30: one area the location-aware sources search (``app/locations.py``).
+
+    ``entry`` is what the admin typed (a US ZIP code, "City, ST", or "lat,lon"); ``lat``/``lon``
+    were resolved from it offline when it was saved (``app/gazetteer.py``), and ``city``/
+    ``state`` are the place it names or the nearest one (empty outside the US). The label is the
+    location's name everywhere (item 31's areas); no event key contains it, so renaming,
+    re-entering or adding a location never moves a feed UID.
+    """
+
+    __tablename__ = "search_locations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    label = Column(String, unique=True, nullable=False)
+    entry = Column(String, nullable=False, default="")
+    kind = Column(String)  # zip | city | latlong | "" (migrated without coordinates)
+    lat = Column(Float)
+    lon = Column(Float)
+    radius = Column(Float, nullable=False, default=25)
+    unit = Column(String, nullable=False, default="miles")  # miles | km
+    city = Column(String)
+    state = Column(String)
+    # Optional per-platform values that win over the ones derived from city/state (the old
+    # global settings, kept by the migration so nothing is lost).
+    meetup_location = Column(String)
+    eventbrite_region = Column(String)
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class EventLocation(Base):
+    """Item 30: the search locations an event was found for (item 31's area feeds)."""
+
+    __tablename__ = "event_locations"
+
+    event_id = Column(Integer, ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
+    location_id = Column(
+        Integer, ForeignKey("search_locations.id", ondelete="CASCADE"), primary_key=True
+    )
 
 
 class Event(Base):

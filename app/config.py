@@ -12,14 +12,13 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class Config:
-    # Location — set by the user in the admin settings UI
-    city_zip: str = ""
-    city_name: str = ""  # e.g. "Portland, OR" — venue fallback, and the name in digest titles
+    # Replaced by the search locations (item 30, Admin > Locations; app/locations.py). Read
+    # only by the one-time migration, which turns them into one location; nothing else uses them.
+    city_zip: str = ""  # e.g. "10001"
+    city_name: str = ""  # e.g. "New York, NY": the migrated location's label
     city_radius_miles: int = 25
-
-    # Regional scraper hints (auto-built from city_name / city_zip if blank)
     eventbrite_region: str = ""  # e.g. "ny--new-york"
-    meetup_location: str = ""  # e.g. "us--ny--New+York"; unset = the Meetup source refuses to run
+    meetup_location: str = ""  # e.g. "us--ny--New+York"
 
     # Scheduling
     scrape_interval_hours: int = 6
@@ -162,6 +161,7 @@ def save_auth(cfg: Config) -> None:
 
 def _apply_env(cfg: Config) -> None:
     mapping = {
+        # Item 30: read only by the one-time migration to a search location.
         "CITY_ZIP": "city_zip",
         "CITY_NAME": "city_name",
         "CITY_RADIUS_MILES": ("city_radius_miles", int),

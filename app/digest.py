@@ -183,7 +183,7 @@ def decide(session, cfg: Config, now: datetime | None = None) -> Decision:
     )
     entries = [Entry(ev.id, fingerprint(ev), _line(ev)) for ev in events]
 
-    name = (cfg.city_name or "").strip() or DEFAULT_NAME
+    name = (cfg.site_name or "").strip() or DEFAULT_NAME
     title = f"{name} — {_plural(len(entries), 'event')} in the next {_plural(window, 'day')}"
     lines = [e.line for e in entries[:MAX_LINES]]
     if len(entries) > MAX_LINES:

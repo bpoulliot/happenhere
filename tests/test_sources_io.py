@@ -296,9 +296,9 @@ def test_export_then_import_of_a_stored_refused_entry_is_a_noop(session):
     before = _snapshot(session)
     plan = sio.run_import(session, sio.export_yaml(session), apply=True)
     assert not plan.added and not plan.updated, plan.render()
-    # still worth a warning, not a change; so is the seeded regional Ticketmaster placeholder,
-    # which has no location in its URL (item 22)
-    assert set(plan.warnings) == {"held", "ticketmaster"}
+    # still worth a warning, not a change (the seeded regional Ticketmaster source has none since
+    # item 30: its areas are the search locations, not its URL)
+    assert set(plan.warnings) == {"held"}
     assert _snapshot(session) == before
     # and a second import of the file itself changes nothing
     plan = _apply(session, _doc(_blocked()))

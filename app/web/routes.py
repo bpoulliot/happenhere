@@ -17,21 +17,22 @@ from sqlalchemy.orm import joinedload
 
 from .. import auth as _auth
 from .. import digest as _digest
+from .. import locations as _locations
 from .. import oidc as _oidc
 from ..canary import conditions as canary_conditions
 from ..config import Config, get_config, save_config_fields
 from ..db import get_session
 from ..ical_export import feed_rows, generate_ics
 from ..jobs import run_single_scraper
-from ..models import Event, Source, shown_events
+from ..models import Event, SearchLocation, Source, shown_events
 from ..netguard import REASONS, NonPublicURL
 from ..plugins import get_report as get_plugin_report
 from ..scrapers import ticketmaster_venue
-from ..scrapers.registry import TYPE_LABELS, scraper_types
+from ..scrapers.registry import TYPE_LABELS, is_location_aware, scraper_types
 from ..sources import (
     _TAG_RE,
     GUARD_REFUSAL_MARK,
-    LOCATION_MISSING_MARK,
+    LOCATION_IN_URL_MARK,
     check_source_url,
     is_check_error,
     location_refusal,
@@ -273,12 +274,17 @@ async def index(request: Request):
     return RedirectResponse("/events", status_code=302)
 
 
+def _area_names(session) -> str:
+    """The search locations' labels, for headings ("" when there are none; item 30)."""
+    return ", ".join(r.label for r in _locations.all_locations(session))
+
+
 @router.get("/events", response_class=HTMLResponse)
 async def events_page(request: Request, days: int = 30, category: str = "", search: str = ""):
-    cfg = get_config()
     with get_session() as session:
         data = _query_events(session, days=days, category=category, search=search)
         categories = _all_categories(session)
+        area_names = _area_names(session)
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -290,7 +296,7 @@ async def events_page(request: Request, days: int = 30, category: str = "", sear
             "category": category,
             "search": search,
             "categories": categories,
-            "city_name": cfg.city_name or "your city",
+            "area_names": area_names,
         },
     )
 
@@ -510,6 +516,8 @@ async def api_events(
 
 def _src_to_dict(s: Source) -> dict:
     return {
+        "location_aware": is_location_aware(s.type or ""),
+        "location_ids": _locations.assigned_ids(s),
         "name": s.name,
         "display_name": s.display_name or "",
         "type": s.type or "",
@@ -532,11 +540,11 @@ def _src_to_dict(s: Source) -> dict:
 
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request):
-    cfg = get_config()
     with get_session() as session:
         sources = session.query(Source).order_by(Source.display_name).all()
         total_events = session.query(Event).count()
         src_list = [_src_to_dict(s) for s in sources]
+        area_names = _area_names(session)
     from ..scheduler import next_scrape_time
 
     return templates.TemplateResponse(
@@ -547,11 +555,20 @@ async def admin_page(request: Request):
             "sources": src_list,
             "total_events": total_events,
             "next_scrape": next_scrape_time(),
-            "city_name": cfg.city_name or "(not configured)",
+            "area_names": area_names,
             "scraper_types": scraper_types(),
             "plugins": get_plugin_report(),
         },
     )
+
+
+def _location_choices() -> list[dict]:
+    with get_session() as session:
+        return [{"id": r.id, "label": r.label} for r in _locations.all_locations(session)]
+
+
+def _location_aware_types() -> list[str]:
+    return [k for k, _ in scraper_types() if is_location_aware(k)]
 
 
 @router.get("/admin/sources/new", response_class=HTMLResponse)
@@ -559,7 +576,14 @@ async def source_new_page(request: Request):
     return templates.TemplateResponse(
         request,
         "admin_source.html",
-        {"request": request, "scraper_types": scraper_types(), "source": None, "detection": None},
+        {
+            "request": request,
+            "scraper_types": scraper_types(),
+            "source": None,
+            "detection": None,
+            "locations": _location_choices(),
+            "location_aware_types": _location_aware_types(),
+        },
     )
 
 
@@ -578,6 +602,8 @@ async def source_edit_page(request: Request, source_name: str):
             "scraper_types": scraper_types(),
             "source": src_dict,
             "detection": None,
+            "locations": _location_choices(),
+            "location_aware_types": _location_aware_types(),
         },
     )
 
@@ -640,7 +666,17 @@ def _check_error(refusal: NonPublicURL | None, scraper_type: str, url: str) -> s
     if refusal:
         return f"{GUARD_REFUSAL_MARK}{refusal}"
     problem = location_refusal(scraper_type, url)
-    return f"{LOCATION_MISSING_MARK}{problem}" if problem else None
+    return f"{LOCATION_IN_URL_MARK}{problem}" if problem else None
+
+
+def _assign_from_form(session, src: Source, mode: str, ids: list[int]) -> None:
+    """The source form's location choice (item 30): "all", "selected" (exactly ``ids`` that
+    exist), or "" (an older form without the field: unchanged)."""
+    if mode == "all":
+        _locations.assign(src, None)
+    elif mode == "selected":
+        known = {r.id for r in session.query(SearchLocation.id).all()}
+        _locations.assign(src, [i for i in ids if i in known])
 
 
 @router.post("/admin/sources")
@@ -651,6 +687,8 @@ async def source_create(
     categories: str = Form(""),
     tags: str = Form(""),
     enabled: str = Form("off"),
+    locations_mode: str = Form(""),
+    location_ids: list[int] = Form([]),
 ):
     name = _slugify(display_name)
     if scraper_type == "ticketmaster_venue":
@@ -688,6 +726,7 @@ async def source_create(
             enabled=(enabled == "on"),
             last_error=check_error,
         )
+        _assign_from_form(session, src, locations_mode or "all", location_ids)
         session.add(src)
         session.commit()
     return RedirectResponse("/admin", status_code=302)
@@ -702,6 +741,8 @@ async def source_update(
     categories: str = Form(""),
     tags: str = Form(""),
     enabled: str = Form("off"),
+    locations_mode: str = Form(""),
+    location_ids: list[int] = Form([]),
 ):
     if scraper_type == "ticketmaster_venue":
         url, refused = _ticketmaster_venue_url(url)
@@ -730,6 +771,7 @@ async def source_update(
             src.categories = json.dumps(cats)
             src.tags = json.dumps(tag_list)
             src.enabled = enabled == "on"
+            _assign_from_form(session, src, locations_mode, location_ids)
             if check_error:  # stored disabled, the refusal as its last_error (a scraper's is kept)
                 src.last_error = check_error
             elif is_check_error(src.last_error):
@@ -779,7 +821,7 @@ async def trigger_scrape(request: Request, source_name: str):
         sources = session.query(Source).order_by(Source.display_name).all()
         total_events = session.query(Event).count()
         src_list = [_src_to_dict(s) for s in sources]
-    cfg = get_config()
+        area_names = _area_names(session)
     from ..scheduler import next_scrape_time
 
     return templates.TemplateResponse(
@@ -790,7 +832,7 @@ async def trigger_scrape(request: Request, source_name: str):
             "sources": src_list,
             "total_events": total_events,
             "next_scrape": next_scrape_time(),
-            "city_name": cfg.city_name or "(not configured)",
+            "area_names": area_names,
             "scraper_types": scraper_types(),
             "plugins": get_plugin_report(),
             "scrape_result": result,
@@ -826,11 +868,6 @@ async def settings_page(request: Request):
         {
             "request": request,
             "cfg": {
-                "city_name": cfg.city_name,
-                "city_zip": cfg.city_zip,
-                "city_radius_miles": cfg.city_radius_miles,
-                "eventbrite_region": cfg.eventbrite_region,
-                "meetup_location": cfg.meetup_location,
                 "scrape_interval_hours": cfg.scrape_interval_hours,
                 "digest_enabled": cfg.digest_enabled,
                 "digest_interval_days": cfg.digest_interval_days,
@@ -849,11 +886,6 @@ async def settings_page(request: Request):
 
 @router.post("/admin/settings")
 async def settings_save(
-    city_name: str = Form(""),
-    city_zip: str = Form(""),
-    city_radius_miles: int = Form(25),
-    eventbrite_region: str = Form(""),
-    meetup_location: str = Form(""),
     scrape_interval_hours: int = Form(6),
     digest_enabled: str = Form("off"),
     digest_interval_days: int = Form(3),
@@ -868,11 +900,6 @@ async def settings_save(
 ):
     cfg = get_config()
     updates = {
-        "city_name": city_name,
-        "city_zip": city_zip,
-        "city_radius_miles": city_radius_miles,
-        "eventbrite_region": eventbrite_region,
-        "meetup_location": meetup_location,
         "scrape_interval_hours": scrape_interval_hours,
         "digest_enabled": (digest_enabled == "on"),
         "digest_interval_days": min(30, max(1, digest_interval_days)),
@@ -904,6 +931,122 @@ async def settings_save(
         log.exception("Could not reschedule the digest")
 
     return RedirectResponse("/admin/settings?saved=1", status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# Admin — search locations (item 30)
+# ---------------------------------------------------------------------------
+
+
+def _locations_page(request: Request):
+    with get_session() as session:
+        rows = _locations.all_locations(session)
+        sources = session.query(Source).order_by(Source.display_name).all()
+        users: dict[int, list[str]] = {r.id: [] for r in rows}
+        for src in sources:
+            if not is_location_aware(src.type or ""):
+                continue
+            ids = _locations.assigned_ids(src)
+            for loc_id in users if ids is None else ids:
+                if loc_id in users:
+                    users[loc_id].append(src.display_name or src.name)
+        items = [
+            {
+                "id": r.id,
+                "label": r.label,
+                "entry": r.entry or "",
+                "kind": r.kind or "",
+                "coords": "" if r.lat is None else f"{r.lat:.4f}, {r.lon:.4f}",
+                "place": f"{r.city}, {r.state}" if r.city else "",
+                "radius": f"{r.radius:g}",
+                "unit": r.unit,
+                "meetup_location": r.meetup_location or "",
+                "eventbrite_region": r.eventbrite_region or "",
+                "sources": users[r.id],
+            }
+            for r in rows
+        ]
+    return templates.TemplateResponse(
+        request,
+        "admin_locations.html",
+        {"request": request, "locations": items, "units": _locations.UNITS},
+    )
+
+
+@router.get("/admin/locations", response_class=HTMLResponse)
+async def locations_page(request: Request):
+    return _locations_page(request)
+
+
+def _location_refused(exc: _locations.LocationInvalid) -> PlainTextResponse:
+    """Fixed text per reason code, never the input (CodeQL stack-trace-exposure)."""
+    return PlainTextResponse(
+        _locations.MESSAGES.get(exc.code, _locations.MESSAGES["unparsed"]), status_code=400
+    )
+
+
+@router.post("/admin/locations")
+async def location_create(
+    label: str = Form(""),
+    entry: str = Form(""),
+    radius: str = Form("25"),
+    unit: str = Form("miles"),
+    meetup_location: str = Form(""),
+    eventbrite_region: str = Form(""),
+):
+    with get_session() as session:
+        try:
+            _locations.add(
+                session,
+                label=label,
+                entry=entry,
+                radius=radius,
+                unit=unit,
+                meetup_location=meetup_location,
+                eventbrite_region=eventbrite_region,
+            )
+        except _locations.LocationInvalid as exc:
+            session.rollback()
+            return _location_refused(exc)
+        session.commit()
+    return RedirectResponse("/admin/locations", status_code=302)
+
+
+@router.post("/admin/locations/{location_id}/update")
+async def location_update(
+    location_id: int,
+    label: str = Form(""),
+    entry: str = Form(""),
+    radius: str = Form("25"),
+    unit: str = Form("miles"),
+    meetup_location: str = Form(""),
+    eventbrite_region: str = Form(""),
+):
+    with get_session() as session:
+        try:
+            _locations.update(
+                session,
+                location_id,
+                label=label,
+                entry=entry,
+                radius=radius,
+                unit=unit,
+                meetup_location=meetup_location,
+                eventbrite_region=eventbrite_region,
+            )
+        except _locations.LocationInvalid as exc:
+            session.rollback()
+            return _location_refused(exc)
+        session.commit()
+    return RedirectResponse("/admin/locations", status_code=302)
+
+
+@router.post("/admin/locations/{location_id}/delete")
+async def location_delete(location_id: int):
+    with get_session() as session:
+        _locations.delete(session, location_id)
+        session.commit()
+    return RedirectResponse("/admin/locations", status_code=302)
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 {% block title %}Events{% endblock %}
 {% block content %}
 <div class="page-header">
-  <h1>Events in {{ city_name }}</h1>
+  <h1>Events{% if area_names %} in {{ area_names }}{% endif %}</h1>
   <span class="event-count">{{ total }} upcoming</span>
 </div>
 
@@ -29,8 +29,8 @@
   {% else %}
   <div class="empty-state">
     <p>No events found.<br>
-    {% if not city_name or city_name == 'your city' %}
-      <a href="/admin/settings">Configure your city</a> to get started.
+    {% if not area_names %}
+      <a href="/admin/locations">Add a search location</a> to get started.
     {% else %}
       Try broadening your filters or <a href="/admin">adding more sources</a>.
     {% endif %}

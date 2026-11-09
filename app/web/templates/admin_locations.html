@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Search locations{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Search locations</h1>
+  <a href="/admin" class="btn">← Back</a>
+</div>
+
+<p class="hint">
+  The areas the location-aware sources search (Ticketmaster regional, Eventbrite, Meetup): each
+  of them runs once per location assigned to it (by default, every location). Enter a US ZIP
+  code, a US city with its state (<code>New York, NY</code>), or <code>latitude,longitude</code>
+  for a place outside the US. ZIP codes and cities are looked up in the bundled US Census
+  Gazetteer: nothing leaves the server. Renaming or re-entering a location never changes an
+  event's feed UID.
+</p>
+
+<div class="card">
+  {% if locations %}
+  <table class="source-table">
+    <thead>
+      <tr><th>Label</th><th>Entered as</th><th>Coordinates</th><th>Place</th><th>Radius</th><th>Searched by</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for loc in locations %}
+    <tr>
+      <td><strong>{{ loc.label }}</strong></td>
+      <td class="mono">{{ loc.entry or "—" }}</td>
+      <td class="mono">{{ loc.coords or "none" }}</td>
+      <td>{{ loc.place or "—" }}</td>
+      <td>{{ loc.radius }} {{ loc.unit }}</td>
+      <td>{{ loc.sources | join(", ") if loc.sources else "no enabled source type yet" }}</td>
+      <td>
+        <details>
+          <summary>Edit</summary>
+          <form method="post" action="/admin/locations/{{ loc.id }}/update" class="form-grid">
+            <div class="form-group"><label>Label</label>
+              <input type="text" name="label" value="{{ loc.label }}" maxlength="60" required></div>
+            <div class="form-group"><label>ZIP / City, ST / lat,lon</label>
+              <input type="text" name="entry" value="{{ loc.entry }}"></div>
+            <div class="form-group"><label>Radius</label>
+              <input type="number" name="radius" value="{{ loc.radius }}" min="1" max="500" step="any" required>
+              <select name="unit">{% for u in units %}<option value="{{ u }}" {% if u == loc.unit %}selected{% endif %}>{{ u }}</option>{% endfor %}</select></div>
+            <div class="form-group"><label>Meetup location <small>(optional)</small></label>
+              <input type="text" name="meetup_location" value="{{ loc.meetup_location }}" placeholder="us--ny--New+York"></div>
+            <div class="form-group"><label>Eventbrite region <small>(optional)</small></label>
+              <input type="text" name="eventbrite_region" value="{{ loc.eventbrite_region }}" placeholder="ny--new-york"></div>
+            <div class="form-group"><button type="submit" class="btn btn-primary">Save</button></div>
+          </form>
+          <form method="post" action="/admin/locations/{{ loc.id }}/delete"
+                onsubmit="return confirm('Delete this location? Sources stop searching it.')">
+            <button type="submit" class="btn btn-muted">Delete</button>
+          </form>
+        </details>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No search locations yet: the location-aware sources search nothing until you add one.</p>
+  {% endif %}
+</div>
+
+<div class="card" style="margin-top:1.25rem">
+  <h2 class="card-title">Add a location</h2>
+  <form method="post" action="/admin/locations">
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Label *</label>
+        <input type="text" name="label" maxlength="60" placeholder="e.g. Midtown" required>
+        <small>The location's name (shown on the events page)</small>
+      </div>
+      <div class="form-group">
+        <label>ZIP code, City, ST, or latitude,longitude *</label>
+        <input type="text" name="entry" placeholder="e.g. 10001 · New York, NY · 40.75,-73.99" required>
+        <small>If you live near rather than in a city, a ZIP code or coordinates fit better</small>
+      </div>
+      <div class="form-group">
+        <label>Radius *</label>
+        <input type="number" name="radius" value="25" min="1" max="500" step="any" required>
+        <select name="unit">{% for u in units %}<option value="{{ u }}">{{ u }}</option>{% endfor %}</select>
+      </div>
+      <div class="form-group">
+        <label>Meetup location <small>(optional)</small></label>
+        <input type="text" name="meetup_location" placeholder="us--ny--New+York">
+        <small>Only if the one built from the place is wrong</small>
+      </div>
+      <div class="form-group">
+        <label>Eventbrite region <small>(optional)</small></label>
+        <input type="text" name="eventbrite_region" placeholder="ny--new-york">
+        <small>The slug in eventbrite.com/d/<strong>ny--new-york</strong>/events/</small>
+      </div>
+    </div>
+    <div style="margin-top:1rem"><button type="submit" class="btn btn-primary">Add location</button></div>
+  </form>
+</div>
+{% endblock %}

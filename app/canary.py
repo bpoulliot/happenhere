@@ -84,7 +84,7 @@ def _line(src: Source) -> str:
 
 
 def _message(cfg: Config, pending: list[Source]) -> tuple[str, str, str | None]:
-    name = (cfg.city_name or "").strip() or "HappenHere"
+    name = (cfg.site_name or "").strip() or "HappenHere"
     n = len(pending)
     title = f"{name} — canary: {n} source{'' if n == 1 else 's'} quiet or failing"
     base = cfg.public_url.rstrip("/") if cfg.public_url else None

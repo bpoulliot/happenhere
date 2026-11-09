@@ -15,44 +15,12 @@
 
     <div class="card">
       <h2 class="card-title">📍 Location</h2>
+      <p class="hint">The areas the regional sources search are the <a href="/admin/locations">search locations</a>.</p>
       <div class="form-grid">
-        <div class="form-group">
-          <label>City Name</label>
-          <input type="text" name="city_name" value="{{ cfg.city_name }}" placeholder="e.g. Portland, OR">
-          <small>Shown in the UI and used as the default venue name for regional scrapers</small>
-        </div>
-        <div class="form-group">
-          <label>ZIP Code</label>
-          <input type="text" name="city_zip" value="{{ cfg.city_zip }}" placeholder="e.g. 97201" maxlength="10">
-          <small>Kept for radius-based sources; the regional Ticketmaster source carries its own area (latlong + radius) in its URL</small>
-        </div>
-        <div class="form-group">
-          <label>Radius (miles)</label>
-          <input type="number" name="city_radius_miles" value="{{ cfg.city_radius_miles }}" min="1" max="200">
-        </div>
         <div class="form-group">
           <label>Timezone</label>
           <input type="text" name="tz" value="{{ cfg.tz }}" placeholder="America/Chicago">
           <small>IANA timezone identifier, e.g. America/New_York, America/Los_Angeles</small>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2 class="card-title">🌐 Regional Scrapers</h2>
-      <p class="hint">These values let regional scrapers filter results to your city. Leave blank if you don't use those scrapers.</p>
-      <div class="form-grid">
-        <div class="form-group">
-          <label>Eventbrite Region</label>
-          <input type="text" name="eventbrite_region" value="{{ cfg.eventbrite_region }}"
-                 placeholder="e.g. or--portland">
-          <small>The slug in eventbrite.com/d/<strong>or--portland</strong>/events/</small>
-        </div>
-        <div class="form-group">
-          <label>Meetup Location</label>
-          <input type="text" name="meetup_location" value="{{ cfg.meetup_location }}"
-                 placeholder="e.g. us--or--Portland">
-          <small>The location param in meetup.com/find/?location=<strong>us--or--Portland</strong></small>
         </div>
       </div>
     </div>

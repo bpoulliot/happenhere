@@ -112,11 +112,14 @@ def upsert_events(
     source_id: int,
     *,
     returned: set[int] | None = None,
+    rows: list[Event] | None = None,
 ) -> tuple[int, int]:
     """Insert new events; refresh seen ones. Returns (new, updated).
 
     ``returned``, when given, receives the id of every row this batch resolved to, new or seen:
     what ``retire_unreturned`` must not retire. A retired row that a batch returns is un-retired.
+    ``rows``, when given, receives the row each event resolved to, in the order of ``events``
+    (item 30 links each row to the search locations that returned it).
 
     A scraped event is matched first on its identity key (above), then on the dedup hash
     (title + date + venue), which also merges the same event from two sources. Two events in
@@ -144,6 +147,7 @@ def upsert_events(
     batch: dict[str, tuple[Event, str | None]] = {}  # dedup hash -> (row, its key) this batch
     batch_start: dict[str, datetime] = {}  # dedup hash -> the start its first event gave (item 28)
 
+    per_event: list[Event] = []  # the row each event resolved to, in order (``rows``)
     new_count = 0
     updated_count = 0
     for ev, key in zip(events, keys, strict=True):
@@ -153,6 +157,7 @@ def upsert_events(
         if key:
             row = session.query(Event).filter_by(identity_key=key).first()
         if row is not None:
+            per_event.append(row)
             _refresh(row, ev)
             # The source says this is the same event, so its time and venue are current too.
             row.start_dt = ev.start_dt
@@ -172,11 +177,13 @@ def upsert_events(
             first, first_key = batch[h]
             if key is None or key == first_key or ev.start_dt == batch_start.get(h):
                 _refresh(first, ev)  # the same event listed twice (item 28: under two ids)
+                per_event.append(first)
                 updated_count += 1
                 continue
             h = timed_hash(ev)  # a different event with the same title, day and venue
             if h in batch:
                 _refresh(batch[h][0], ev)
+                per_event.append(batch[h][0])
                 updated_count += 1
                 continue
 
@@ -186,6 +193,7 @@ def upsert_events(
             h = timed_hash(ev)  # stored in an earlier run: the same rule as within a batch
             if h in batch:
                 _refresh(batch[h][0], ev)
+                per_event.append(batch[h][0])
                 updated_count += 1
                 continue
             row = session.query(Event).filter_by(dedup_hash=h).first()
@@ -225,9 +233,12 @@ def upsert_events(
         batch[h] = (row, key)
         batch_start.setdefault(h, ev.start_dt)
         resolved.append(row)
+        per_event.append(row)
     session.commit()
     if returned is not None:
         returned.update(row.id for row in resolved)
+    if rows is not None:
+        rows.extend(per_event)
     return new_count, updated_count
 
 

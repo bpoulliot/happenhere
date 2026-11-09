@@ -44,11 +44,40 @@ class EventData:
         return hashlib.sha256(key.encode()).hexdigest()
 
 
+@dataclass(frozen=True)
+class SearchArea:
+    """Item 30: one search location, as a location-aware scraper receives it.
+
+    A scraper class that sets ``LOCATION_AWARE = True`` takes ``location=`` (one of these) in
+    its constructor and runs once per location assigned to its source (``app/jobs.py``).
+    ``lat``/``lon`` are None for a location saved without coordinates; ``city``/``state`` are
+    empty outside the US.
+    """
+
+    id: int
+    label: str
+    lat: float | None
+    lon: float | None
+    radius: float
+    unit: str  # "miles" | "km"
+    city: str = ""
+    state: str = ""
+    meetup_location: str = ""
+    eventbrite_region: str = ""
+
+    @property
+    def radius_text(self) -> str:
+        """The radius as a query parameter: "25", or "12.5"."""
+        return f"{self.radius:g}"
+
+
 class BaseScraper(abc.ABC):
     # Names the source in log lines. A generic URL-driven scraper sets it per instance
     # (item 19: the bases log it, and a missing one failed every ical/spothopper source).
     SOURCE_NAME: str = ""
     SOURCE_TYPE: str
+    # Item 30: True = the type searches an area; it takes ``location=`` and fans out.
+    LOCATION_AWARE: bool = False
 
     def __init__(self, config):
         self.config = config

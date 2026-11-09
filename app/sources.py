@@ -11,7 +11,22 @@ with ``--disable-missing``. Every URL passes ``netguard``, as it does in the adm
 A *disabled* entry whose URL the guard refuses is not a refused file (item 24): it is stored
 disabled, the refusal in its ``last_error``, and the plan shows a warning. Enabling it, in the
 admin or by a later import, runs the guard again and is refused while it still fails. A regional
-``ticketmaster`` entry without a location in its URL is judged the same way (item 22).
+``ticketmaster`` entry whose URL still carries an area (item 22's form) is judged the same way:
+since item 30 the area is a search location.
+
+Search locations (item 30) travel in the same file, keyed by label, and are added or updated,
+never deleted::
+
+    locations:
+      - label: Midtown
+        where: "10001"          # a US ZIP code, "City, ST", or "lat,lon"
+        radius: 25
+        unit: miles             # or km
+    sources:
+      - name: ticketmaster
+        type: ticketmaster
+        url: https://app.ticketmaster.com/discovery/v2/events
+        locations: [Midtown]    # or "all" (the default for a new source); absent = unchanged
 """
 
 from __future__ import annotations
@@ -27,17 +42,20 @@ from pathlib import Path
 import yaml
 from sqlalchemy.orm import Session
 
+from . import locations as loc
 from . import logredact
-from .models import Source
+from .models import SearchLocation, Source
 from .netguard import NonPublicURL, require_public_url
 from .scrapers import ticketmaster
-from .scrapers.registry import scraper_types
+from .scrapers.registry import is_location_aware, scraper_types
 
 log = logging.getLogger(__name__)
 
 _NAME_RE = re.compile(r"^[\w.-]+$")
 _TAG_RE = re.compile(r"^[a-z0-9-]+$")
-_FIELDS = {"name", "display_name", "type", "url", "categories", "tags", "enabled"}
+_FIELDS = {"name", "display_name", "type", "url", "categories", "tags", "enabled", "locations"}
+_LOCATION_FIELDS = {"label", "where", "radius", "unit", "meetup_location", "eventbrite_region"}
+ALL = "all"  # a source's ``locations:`` value for every location
 
 
 class ImportRefused(ValueError):
@@ -47,8 +65,13 @@ class ImportRefused(ValueError):
 # A ``last_error`` written by a failed import/admin check (not by a scraper) starts with one of
 # these marks, so a later pass can tell its own record from a scraper's and clear only its own.
 GUARD_REFUSAL_MARK = "url refused: "
-LOCATION_MISSING_MARK = "location missing: "  # item 22: a regional Ticketmaster URL
-CHECK_ERROR_MARKS: tuple[str, ...] = (GUARD_REFUSAL_MARK, LOCATION_MISSING_MARK)
+LOCATION_IN_URL_MARK = "location in url: "  # item 30: a regional Ticketmaster URL with an area
+LOCATION_MISSING_MARK = "location missing: "  # item 22's mark; cleared by app.locations.migrate
+CHECK_ERROR_MARKS: tuple[str, ...] = (
+    GUARD_REFUSAL_MARK,
+    LOCATION_IN_URL_MARK,
+    LOCATION_MISSING_MARK,
+)
 
 
 def is_check_error(last_error: str | None) -> bool:
@@ -81,9 +104,10 @@ def check_source_url(url: str) -> None:
 
 
 def location_refusal(stype: str, url: str) -> str | None:
-    """Fixed text when a source of this type cannot run from this URL (item 22), else None.
+    """Fixed text when a source of this type cannot run from this URL, else None.
 
-    Only the regional ``ticketmaster`` type has such a rule: its URL carries its location.
+    Only the regional ``ticketmaster`` type has such a rule: its URL must not carry an area of
+    its own (item 30: the areas are the search locations).
     """
     if stype == "ticketmaster":
         return ticketmaster.location_problem(url)
@@ -172,7 +196,7 @@ def _validate_entry(raw: object, label: str) -> tuple[dict | None, list[str]]:
             problem = location_refusal(stype, url)
             if problem:
                 refusal = failed_check(
-                    enabled, label, errors, problem, f"{LOCATION_MISSING_MARK}{problem}"
+                    enabled, label, errors, problem, f"{LOCATION_IN_URL_MARK}{problem}"
                 )
 
     cats = raw.get("categories", [])
@@ -190,6 +214,14 @@ def _validate_entry(raw: object, label: str) -> tuple[dict | None, list[str]]:
             errors.append(f"{label}: tags must be a list of slugs ([a-z0-9-])")
             tags = None
 
+    locs = raw.get("locations")
+    if locs is not None and locs != ALL:
+        if not isinstance(locs, list) or not all(isinstance(x, str) and x.strip() for x in locs):
+            errors.append(f"{label}: locations must be 'all' or a list of location labels")
+            locs = None
+        else:
+            locs = [" ".join(x.split()) for x in locs]
+
     if errors:
         return None, errors
     entry = {
@@ -202,21 +234,79 @@ def _validate_entry(raw: object, label: str) -> tuple[dict | None, list[str]]:
     }
     if tags is not None:
         entry["tags"] = list(tags)
+    if "locations" in raw and locs is not None:
+        entry["locations"] = ALL if locs == ALL else list(locs)
     if refusal:
         entry["refusal"] = refusal  # not a column: build_plan turns it into last_error + a warning
     return entry, []
 
 
+def _validate_location(raw: object, label: str) -> tuple[dict | None, list[str]]:
+    """A ``locations:`` entry, resolved offline (item 30)."""
+    if not isinstance(raw, dict):
+        return None, [f"{label}: must be a mapping, got {type(raw).__name__}"]
+    errors = [f"{label}: unknown field {k!r}" for k in sorted(set(raw) - _LOCATION_FIELDS)]
+    name = raw.get("label")
+    if isinstance(name, str) and name.strip():
+        label = f"location {' '.join(name.split())!r}"
+    texts = {}
+    for k in ("label", "where", "unit", "meetup_location", "eventbrite_region"):
+        v = raw.get(k, "")
+        v = "" if v is None else v
+        if not isinstance(v, str):
+            errors.append(f"{label}: {k} must be a string")
+            v = ""
+        texts[k] = v
+    radius = raw.get("radius", 25)
+    if isinstance(radius, bool) or not isinstance(radius, int | float):
+        errors.append(f"{label}: radius must be a number")
+        radius = 25
+    if errors:
+        return None, errors
+    try:
+        cols = loc.clean_fields(
+            texts["label"],
+            texts["where"],
+            radius,
+            texts["unit"] or "miles",
+            texts["meetup_location"],
+            texts["eventbrite_region"],
+        )
+    except loc.LocationInvalid as exc:
+        return None, [f"{label}: {exc}"]
+    return cols, []
+
+
 def parse_document(text: str) -> list[dict]:
-    """Parse and validate a whole file; raise ImportRefused naming every bad entry."""
+    """Parse and validate a whole file's sources; raise ImportRefused naming every bad entry."""
+    return parse_full(text)[1]
+
+
+def parse_full(text: str) -> tuple[list[dict], list[dict]]:
+    """Parse and validate a whole file: (locations, sources). Raise ImportRefused naming every
+    bad entry; nothing is written before this has passed."""
     try:
         doc = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         raise ImportRefused(f"not valid YAML: {exc}") from exc
     if not isinstance(doc, dict) or not isinstance(doc.get("sources"), list):
         raise ImportRefused("expected a mapping with a 'sources:' list")
-    entries: list[dict] = []
     errors: list[str] = []
+    places: list[dict] = []
+    raw_locations = doc.get("locations", []) or []
+    if not isinstance(raw_locations, list):
+        errors.append("'locations:' must be a list")
+        raw_locations = []
+    labels: set[str] = set()
+    for i, raw in enumerate(raw_locations, 1):
+        cols, errs = _validate_location(raw, f"location #{i}")
+        errors.extend(errs)
+        if cols:
+            if cols["label"].lower() in labels:
+                errors.append(f"location {cols['label']!r}: duplicate label in file")
+            labels.add(cols["label"].lower())
+            places.append(cols)
+    entries: list[dict] = []
     seen: set[str] = set()
     for i, raw in enumerate(doc["sources"], 1):
         entry, errs = _validate_entry(raw, f"entry #{i}")
@@ -228,14 +318,14 @@ def parse_document(text: str) -> list[dict]:
             entries.append(entry)
     if errors:
         raise ImportRefused(f"{len(errors)} problem(s), nothing written:\n  " + "\n  ".join(errors))
-    return entries
+    return places, entries
 
 
 # --- Plan --------------------------------------------------------------------------------
 
 
-def _current(src: Source) -> dict:
-    return {
+def _current(src: Source, labels: dict[int, str] | None = None) -> dict:
+    out = {
         "name": src.name,
         "display_name": src.display_name or "",
         "type": src.type or "",
@@ -244,6 +334,16 @@ def _current(src: Source) -> dict:
         "tags": source_tags(src),
         "enabled": bool(src.enabled),
     }
+    ids = loc.assigned_ids(src)
+    if ids is None:
+        out["locations"] = ALL
+    else:
+        labels = labels or {}
+        out["locations"] = [labels[i] for i in ids if i in labels]
+    return out
+
+
+_LOC_COMPARED = ("entry", "radius", "unit", "meetup_location", "eventbrite_region")
 
 
 @dataclass
@@ -259,16 +359,35 @@ class Plan:
     changes: dict[str, list[str]] = field(default_factory=dict)
     warnings: dict[str, str] = field(default_factory=dict)  # stored anyway, name -> reason
     applied: bool = False
+    # Item 30: the file's search locations, by label.
+    locations_added: list[dict] = field(default_factory=list)
+    locations_updated: list[dict] = field(default_factory=list)
+    locations_unchanged: list[dict] = field(default_factory=list)
+    location_changes: dict[str, list[str]] = field(default_factory=dict)
 
     def summary(self) -> str:
         out = (
             f"{len(self.added)} added, {len(self.updated)} updated, "
             f"{len(self.unchanged)} unchanged, {len(self.missing)} missing"
         )
+        n_locs = len(self.locations_added) + len(self.locations_updated)
+        if n_locs or self.locations_unchanged:
+            out += (
+                f"; locations: {len(self.locations_added)} added, "
+                f"{len(self.locations_updated)} updated, "
+                f"{len(self.locations_unchanged)} unchanged"
+            )
         return out + (f", {len(self.warnings)} warning(s)" if self.warnings else "")
 
     def render(self) -> str:
         lines = []
+        for c in self.locations_added:
+            lines.append(f"  location add        {c['label']}")
+        for c in self.locations_updated:
+            changed = ", ".join(self.location_changes[c["label"]])
+            lines.append(f"  location update     {c['label']}: {changed}")
+        for c in self.locations_unchanged:
+            lines.append(f"  location unchanged  {c['label']}")
         for e in self.added:
             lines.append(f"  add        {e['name']}")
         for e in self.updated:
@@ -291,12 +410,55 @@ class Plan:
         return "\n".join([*lines, head])
 
 
-def build_plan(session: Session, entries: list[dict], disable_missing: bool = False) -> Plan:
+def _plan_locations(session: Session, plan: Plan, places: list[dict]) -> None:
+    for cols in places:
+        row = loc.by_label(session, cols["label"])
+        if row is None:
+            plan.locations_added.append(cols)
+            continue
+        diff = [
+            k
+            for k in _LOC_COMPARED
+            if (cols[k] or None) != (getattr(row, k) or None)
+            and not (k == "radius" and float(cols[k]) == float(row.radius))
+        ]
+        if row.label != cols["label"]:
+            diff.append("label")
+        if diff:
+            plan.locations_updated.append(cols)
+            plan.location_changes[cols["label"]] = diff
+        else:
+            plan.locations_unchanged.append(cols)
+
+
+def build_plan(
+    session: Session,
+    entries: list[dict],
+    disable_missing: bool = False,
+    places: list[dict] | None = None,
+) -> Plan:
     plan = Plan()
+    _plan_locations(session, plan, places or [])
+    known = {r.label.lower() for r in session.query(SearchLocation).all()}
+    known |= {c["label"].lower() for c in places or []}
+    labels = {r.id: r.label for r in session.query(SearchLocation).all()}
+    bad = [
+        f"entry {e['name']!r}: unknown location {x!r} (add it under 'locations:')"
+        for e in entries
+        if isinstance(e.get("locations"), list)
+        for x in e["locations"]
+        if x.lower() not in known
+    ]
+    if bad:
+        raise ImportRefused(f"{len(bad)} problem(s), nothing written:\n  " + "\n  ".join(bad))
     rows = {s.name: s for s in session.query(Source).all()}
     in_file = {e["name"] for e in entries}
     for e in entries:
         e = dict(e)
+        if isinstance(e.get("locations"), list):  # compare by the labels as stored
+            stored = {lbl.lower(): lbl for lbl in labels.values()}
+            stored |= {c["label"].lower(): c["label"] for c in places or []}
+            e["locations"] = [stored[x.lower()] for x in e["locations"]]
         refusal = e.pop("refusal", None)
         if refusal:
             plan.warnings[e["name"]] = refusal
@@ -306,7 +468,7 @@ def build_plan(session: Session, entries: list[dict], disable_missing: bool = Fa
                 e["last_error"] = refusal
             plan.added.append(e)
             continue
-        cur = _current(src)
+        cur = _current(src, labels)
         diff = [k for k in e if k != "name" and e[k] != cur.get(k)]
         if refusal and src.last_error != refusal:
             e["last_error"] = refusal
@@ -327,19 +489,41 @@ def build_plan(session: Session, entries: list[dict], disable_missing: bool = Fa
 
 
 def _write(session: Session, plan: Plan) -> None:
+    for cols in plan.locations_added:
+        session.add(SearchLocation(**cols))
+    for cols in plan.locations_updated:
+        row = loc.by_label(session, cols["label"])
+        for k, v in cols.items():
+            setattr(row, k, v)
+    session.flush()
+    ids = {r.label.lower(): r.id for r in session.query(SearchLocation).all()}
     for e in plan.added:
-        session.add(Source(**_columns(e)))
+        src = Source(**_columns(e))
+        _assign(src, e, ids)
+        session.add(src)
     for e in plan.updated:
         src = session.query(Source).filter_by(name=e["name"]).one()
         for k, v in _columns(e).items():
             setattr(src, k, v)
+        _assign(src, e, ids)
     for name in plan.would_disable:
         session.query(Source).filter_by(name=name).one().enabled = False
     session.commit()  # one transaction: all of it or none of it
 
 
+def _assign(src: Source, e: dict, ids: dict[str, int]) -> None:
+    if "locations" not in e:
+        return  # absent: an added source gets every location, an updated one keeps its own
+    if e["locations"] == ALL:
+        loc.assign(src, None)
+    else:
+        loc.assign(src, [ids[x.lower()] for x in e["locations"]])
+
+
 def _columns(e: dict) -> dict:
-    cols = {k: v for k, v in e.items() if k not in ("categories", "tags")}  # incl. last_error
+    cols = {
+        k: v for k, v in e.items() if k not in ("categories", "tags", "locations")
+    }  # incl. last_error
     cols["categories"] = json.dumps(e["categories"])
     if "tags" in e:
         cols["tags"] = json.dumps(e["tags"])
@@ -349,8 +533,8 @@ def _columns(e: dict) -> dict:
 def run_import(
     session: Session, text: str, apply: bool = False, disable_missing: bool = False
 ) -> Plan:
-    entries = parse_document(text)  # raises before anything is written
-    plan = build_plan(session, entries, disable_missing)
+    places, entries = parse_full(text)  # raises before anything is written
+    plan = build_plan(session, entries, disable_missing, places)
     if apply:
         try:
             _write(session, plan)
@@ -364,8 +548,19 @@ def run_import(
 
 
 def export_yaml(session: Session) -> str:
-    entries = [_current(s) for s in session.query(Source).order_by(Source.name).all()]
-    return yaml.safe_dump({"sources": entries}, sort_keys=False, allow_unicode=True)
+    places = session.query(SearchLocation).order_by(SearchLocation.label).all()
+    labels = {r.id: r.label for r in places}
+    entries = []
+    for s in session.query(Source).order_by(Source.name).all():
+        e = _current(s, labels)
+        if not is_location_aware(s.type or ""):
+            del e["locations"]  # a per-venue source searches no area
+        entries.append(e)
+    doc: dict = {}
+    if places:
+        doc["locations"] = [loc.export_entry(r) for r in places]
+    doc["sources"] = entries
+    return yaml.safe_dump(doc, sort_keys=False, allow_unicode=True)
 
 
 # --- CLI ---------------------------------------------------------------------------------

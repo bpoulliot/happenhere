@@ -1,10 +1,16 @@
-"""Meetup.com scraper — JS-rendered, no free API, scrape /find/ page."""
+"""Meetup.com scraper — JS-rendered, no free API, scrape /find/ page.
+
+Location-aware (item 30): one search per search location, ``location=us--<state>--<City>`` from
+the location's city (or the location's own ``meetup_location``). The search distance stays the
+page's fixed ``tenMiles``: the location's radius is not mapped onto Meetup's distance values.
+"""
 
 from __future__ import annotations
 
 import logging
 import time
 from datetime import datetime
+from urllib.parse import quote_plus
 
 from bs4 import BeautifulSoup
 
@@ -18,17 +24,32 @@ log = logging.getLogger(__name__)
 # Filter by location using lat/lon or zip in the search field
 _SEARCH_URL_TPL = "https://www.meetup.com/find/?eventType=inPerson&source=EVENTS&sortField=DATETIME&location={location}&distance=tenMiles"
 _VENUE = ""  # set from config
-MISSING_LOCATION = "Meetup location is not set (Settings): nothing to search"
+MISSING_LOCATION = (
+    "Meetup needs a search location in the US (a ZIP code or a city), "
+    "or the location's own Meetup location: nothing to search"
+)
 
 
 class MeetupScraper(PlaywrightScraper):
     SOURCE_NAME = "meetup"
+    LOCATION_AWARE = True
+
+    def __init__(self, config, location=None):
+        super().__init__(config)
+        self.location = location
 
     def _city_name(self) -> str:
-        return getattr(self.config, "city_name", "") or "Local Events"
+        return self.location.label if self.location else "Local Events"
 
     def _location(self) -> str:
-        return (getattr(self.config, "meetup_location", "") or "").strip()
+        loc = self.location
+        if loc is None:
+            return ""
+        if loc.meetup_location:
+            return loc.meetup_location.strip()
+        if loc.city and loc.state:
+            return f"us--{loc.state.lower()}--{quote_plus(loc.city)}"
+        return ""
 
     def _get_url(self) -> str:
         return _SEARCH_URL_TPL.format(location=self._location())
@@ -37,7 +58,7 @@ class MeetupScraper(PlaywrightScraper):
         # No default location (item 29): an unconfigured source refuses before Chromium starts,
         # and the run records the reason on the source (``last_error``).
         if not self._location():
-            log.warning("Meetup: no location set (Settings > Meetup location); not scraped")
+            log.warning("Meetup: no US search location; not scraped")
             raise ValueError(MISSING_LOCATION)
         return super().scrape()
 
