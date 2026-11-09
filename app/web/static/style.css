@@ -185,7 +185,6 @@ input[type=search] { flex: 1; min-width: 180px; }
   flex-shrink: 0;
 }
 .source-badge.source-ticketmaster { background: #1a1040; color: #a78bfa; }
-.source-badge.source-peakradar { background: #0f2a1a; color: #4ade80; }
 .source-badge.source-fathom { background: #1a1010; color: #fb923c; }
 
 .event-title { font-size: 1rem; font-weight: 600; line-height: 1.35; }

@@ -18,8 +18,8 @@ class Config:
     city_radius_miles: int = 25
 
     # Regional scraper hints (auto-built from city_name / city_zip if blank)
-    eventbrite_region: str = ""  # e.g. "co--colorado-springs"
-    meetup_location: str = ""  # e.g. "us--co--Colorado+Springs"
+    eventbrite_region: str = ""  # e.g. "ny--new-york"
+    meetup_location: str = ""  # e.g. "us--ny--New+York"; unset = the Meetup source refuses to run
 
     # Scheduling
     scrape_interval_hours: int = 6

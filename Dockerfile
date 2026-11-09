@@ -58,7 +58,7 @@ ENV CONFIG_PATH=/app/config.yml
 
 ARG BUILD_VERSION=dev
 LABEL org.opencontainers.image.title="happenhere" \
-      org.opencontainers.image.description="Colorado Springs local events aggregator" \
+      org.opencontainers.image.description="Local events aggregator: venue sources to a public events page and calendar feeds" \
       org.opencontainers.image.version="${BUILD_VERSION}"
 
 # Run with an init as PID 1 (compose `init: true`, `docker run --init`): uvicorn does not reap

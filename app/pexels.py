@@ -14,7 +14,7 @@ _API = "https://api.pexels.com/v1/search"
 
 _STRIP = re.compile(
     r"\b("
-    r"colorado springs?|brewery|brewing|company|co|llc|inc|"
+    r"brewery|brewing|company|co|llc|inc|"
     r"presents?|featuring?|ft|vs|with|the|and|an?|of|at|in|on|for|by|"
     r"presented|hosted|night|day|event|series|live|show|performance|annual|"
     r"th|st|nd|rd|"

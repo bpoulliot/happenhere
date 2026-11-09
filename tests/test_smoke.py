@@ -64,7 +64,7 @@ def test_stock_photo_fallback():
 
 def test_slugify():
     from app.web.routes import _slugify
-    assert _slugify("Bristol Brewing Company") == "bristol_brewing_company"
+    assert _slugify("Example Brewing Company") == "example_brewing_company"
     assert _slugify("Café Rösti!") == "cafe_rosti"
     assert len(_slugify("a" * 100)) <= 50
 

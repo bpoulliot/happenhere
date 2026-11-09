@@ -24,7 +24,7 @@ def dns(monkeypatch):
     def fake(host, port, *a, **kw):
         if host.startswith("gone."):
             raise socket.gaierror("unknown host")
-        ip = "192.168.1.3" if host.startswith("lan.") else PUBLIC
+        ip = "192.0.2.10" if host.startswith("lan.") else PUBLIC
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))]
 
     monkeypatch.setattr(netguard.socket, "getaddrinfo", fake)
