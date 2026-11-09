@@ -1,14 +1,11 @@
 # HappenHere config — copy to config.yml alongside docker-compose.yml
 
-# --- Location (required) ---
-city_name: "Portland, OR"
-city_zip: "97201"
-city_radius_miles: 25
+# --- Location ---
+# The areas the regional sources search are the search locations (Admin > Locations, or
+# `locations:` in a sources file): a US ZIP code, "City, ST" or "lat,lon", with a radius.
+# The old city_zip / city_name / city_radius_miles / eventbrite_region / meetup_location settings
+# are read once, by the upgrade that turns them into one location.
 tz: "America/Los_Angeles"
-
-# --- Regional scraper hints (optional) ---
-# eventbrite_region: "or--portland"
-# meetup_location: "us--or--Portland"
 
 # --- Scheduling ---
 scrape_interval_hours: 6
