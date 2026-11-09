@@ -34,9 +34,12 @@ MESSAGES = {
     "or latitude,longitude.",
 }
 
-_ZIP_RE = re.compile(r"^(\d{5})(?:-\d{4})?$")
-_LATLONG_RE = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)\s*$")
-_CITY_RE = re.compile(r"^(.+?)\s*,\s*([A-Za-z]{2})$")
+# Each pattern is matched against one token (no surrounding whitespace to backtrack over), and
+# an entry longer than MAX_ENTRY is refused before any of them runs.
+MAX_ENTRY = 120
+_ZIP_RE = re.compile(r"(\d{5})(?:-\d{4})?")
+_NUMBER_RE = re.compile(r"-?\d{1,3}(?:\.\d{1,10})?")
+_STATE_RE = re.compile(r"[A-Za-z]{2}")
 
 
 class LocationRefused(ValueError):
@@ -159,26 +162,29 @@ def resolve(entry: str) -> Resolved:
     text = (entry or "").strip()
     if not text:
         raise LocationRefused("empty")
-    m = _ZIP_RE.match(text)
+    if len(text) > MAX_ENTRY:
+        raise LocationRefused("unparsed")
+    m = _ZIP_RE.fullmatch(text)
     if m:
         hit = data().zcta.get(m.group(1))
         if hit is None:
             raise LocationRefused("zip_unknown")
         city, state = nearest_place(*hit)
         return Resolved("zip", hit[0], hit[1], city, state)
-    m = _LATLONG_RE.match(text)
-    if m:
-        lat, lon = float(m.group(1)), float(m.group(2))
+    parts = text.replace(",", " ").split()
+    if len(parts) == 2 and all(_NUMBER_RE.fullmatch(p) for p in parts):
+        lat, lon = float(parts[0]), float(parts[1])
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
             raise LocationRefused("latlong_range")
         city, state = nearest_place(lat, lon)
         return Resolved("latlong", lat, lon, city, state)
-    m = _CITY_RE.match(text)
-    if m:
-        state = m.group(2).upper()
+    city, comma, state = text.rpartition(",")
+    city, state = city.strip(), state.strip()
+    if comma and city and _STATE_RE.fullmatch(state):
+        state = state.upper()
         if not any(s == state for s, _ in data().places):
             raise LocationRefused("state_unknown")
-        hit = data().places.get((state, _norm(m.group(1))))
+        hit = data().places.get((state, _norm(city)))
         if hit is None:
             raise LocationRefused("city_unknown")
         return Resolved("city", hit[1], hit[2], hit[0], state)

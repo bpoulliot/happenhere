@@ -14,6 +14,7 @@ geocoding service.
 
 from __future__ import annotations
 
+import re
 import socket
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
@@ -102,6 +103,9 @@ def test_a_point_is_named_by_the_place_it_lies_in_not_a_nearer_enclave():
         ("91, 0", "latlong_range"),
         ("0, 181", "latlong_range"),
         ("12 Main St, Apt 4", "unparsed"),
+        ("9" + "\t" * 5000, "unparsed"),  # long input: refused before any pattern runs
+        ("a" + " " * 5000 + ", NY", "unparsed"),
+        ("40.5, -73.25, 7", "unparsed"),
     ],
 )
 def test_an_entry_that_does_not_resolve_is_refused_with_fixed_text(entry, code):
@@ -121,7 +125,8 @@ def test_the_bundled_files_and_their_source_record_ship_with_the_app():
     assert (real / "zcta.tsv").stat().st_size > 100_000  # stat only: their contents stay unread
     assert (real / "places.tsv").stat().st_size > 100_000
     record = (real / "SOURCE.md").read_text()
-    assert "www2.census.gov" in record and "Gazetteer" in record and "public domain" in record
+    assert re.search(r"<https://www2\.census\.gov/geo/docs/\S+_Gaz_zcta_national\.zip>", record)
+    assert "Gazetteer" in record and "public domain" in record
 
 
 @pytest.fixture
