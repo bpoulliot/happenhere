@@ -1,8 +1,8 @@
 """Shared base for SpotHopper-powered brewery event pages.
 
 SpotHopper has two HTML template variants:
-  A) .calendar-day-event / .ev-title / .ev-date / .ev-time  (Gunslinger)
-  B) .event-text-holder / h2 / .event-main-text.event-day   (Cogstone, OCC)
+  A) .calendar-day-event / .ev-title / .ev-date / .ev-time
+  B) .event-text-holder / h2 / .event-main-text.event-day
 """
 
 from __future__ import annotations

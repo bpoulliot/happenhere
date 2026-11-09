@@ -23,7 +23,7 @@ item that is not READY.
   narrowest count) and the Docker build. `main` takes changes only through a PR with all of them
   green.
 
-**Next free item number: 29.** Always re-read it here before filing.
+**Next free item number: 32.** Always re-read it here before filing.
 
 ## Items
 
@@ -45,7 +45,7 @@ item that is not READY.
 | 14 | 1 | Configurable notification digest that never repeats an unchanged list | **DONE** |
 | 15 | 0 | A re-scraped event keeps its first start time: a changed time never reaches the feed or the digest | **DONE** |
 | 16 | 1 | Eventbrite: the regional scraper is against the site's terms; an API token or the partner program instead | **NEEDS DECISION** |
-| 17 | 0 | Hard-coded `America/Denver`: parsed times and the ICS feed ignore the configured timezone | **DONE** |
+| 17 | 0 | Hard-coded deployment timezone: parsed times and the ICS feed ignore the configured timezone | **DONE** |
 | 18 | 0 | Two same-title shows on one day in one batch abort the whole scrape run (UNIQUE, no rollback) | **DONE** |
 | 19 | 0 | Every `ical` and `spothopper` source fails: the generic scrapers have no `SOURCE_NAME` | **DONE** |
 | 20 | 0 | Orphaned Chromium processes are never reaped while uvicorn is PID 1 | **DONE** |
@@ -57,6 +57,9 @@ item that is not READY.
 | 26 | 0 | Scrapers that can return a truncated list retire events that are still on (item 25) | **NEEDS DECISION** |
 | 27 | 1 | A second show of a day (stored under `timed_hash`) whose time moves gets a new row and UID (item 15) | **NEEDS DECISION** |
 | 28 | 0 | One show listed twice in one batch under two ids (same title, venue and exact start) is one event | **DONE** |
+| 29 | 0 | No deployment location in the repository: example values, a default Meetup location, test addresses | **DONE** |
+| 30 | 1 | Search locations: one or more ZIP / city / lat-long areas with a radius, resolved offline; location-aware types fan out per area | **READY** |
+| 31 | 1 | Area feeds: each search location is an area; `/feed/area/<label>.ics` and an area filter on the events page | **READY** (after 30) |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -731,7 +734,7 @@ scrape, crawl, or employ any automated means to extract data from the Sites"*. T
    `eventbrite_venue` type follows the `ticketmaster_venue` pattern in item 12.
 3. Apply to the partner program, or not?
 
-### 17 — Hard-coded `America/Denver` timezone — DONE
+### 17 — The hard-coded deployment timezone — DONE
 
 **Found by item 12, not fixed there.** Four places convert or emit times in a fixed zone instead of
 the configured one:
@@ -755,7 +758,7 @@ All five places use it: `_parse_dt` (`_html_base.py`), `_ical_base.py` (start an
 `ticketmaster.py` (the event time; the `startDateTime` bound is plain UTC and needs no zone),
 `ical_export.py` and the scheduler. `ical_export.py` now labels each `DTSTART`/`DTEND` and
 `X-WR-TIMEZONE` with the configured `TZID` and builds the `VTIMEZONE` from the tz database
-(`Timezone.from_tzinfo`) instead of a hand-written Mountain block, so the two cannot disagree. The
+(`Timezone.from_tzinfo`) instead of a hand-written zone block, so the two cannot disagree. The
 scheduler takes `Config.tz`, which already reads the `TZ` environment variable. `grep -rn "America/" app/`
 now finds only the config default and the settings form's placeholder text. Stored times are still
 naive local wall-clock times; only the zone they are converted into changed, and a deployment whose
@@ -1257,4 +1260,82 @@ with another title stay two events.
 * the start comparison removed: fails the 3 tests above (3 failed).
 * `batch_start` not set on the identity-key path: fails
   `test_the_merged_id_is_returned_and_nothing_retires` (1 failed of 432).
+
+### 29 — No deployment location in the repository — DONE
+
+**Found 2026-11-09** (owner's rule: nothing about a deployment's location goes in this public
+repository: no city, region, postal code, coordinates, timezone name tied to it, host name or LAN
+address). Defaults and examples use a neutral city (New York, Los Angeles); tests use the
+documentation address ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`)
+or neutral private examples. **Git history keeps the old text:** the owner declined a history
+rewrite; this item removes it from the tree only.
+
+**Scrubbed:**
+* `Dockerfile`: the image description named a city; now generic.
+* `app/config.py`: the Eventbrite region and Meetup location examples named a city; now New York.
+* `app/scrapers/meetup.py`: an unset `meetup_location` fell back to a built-in city. **Behaviour
+  change:** there is no default; an unconfigured Meetup source refuses before Chromium starts
+  (`ValueError`, recorded as the source's `last_error`, logged as a warning).
+* `app/pexels.py`: the photo-query stop words included a city name; removed.
+* `app/scrapers/_spothopper_base.py`: the two template variants were labelled with venue names.
+* `app/web/static/style.css`: a badge class named after a deployment's source.
+* `tests/test_netguard.py`, `tests/test_sources_io.py`: LAN addresses and a `.lan` host replaced by
+  documentation-range addresses, neutral RFC 1918 examples and `router.internal`; the refused-address
+  list gained the three IPv4 documentation ranges and `2001:db8::/32`.
+* `tests/test_smoke.py`: a venue name in the slug test.
+* Item 17's title and text named the old fixed zone; now "the deployment timezone".
+
+Kept: the `@peakevents` UID suffix of rows stored before item 03 (a feed UID cannot change) and the
+predecessor project's name where it explains that suffix or the Chromium leak.
+
+**Failing first** (`tests/test_meetup_location.py` against `origin/main`): the unconfigured-source
+test failed (the scraper reached Chromium with the built-in city); the configured-location test passed.
+
+### 30 — Search locations — READY
+
+**Owner's spec (2026-11-09).** The admin keeps a list of one or more **search locations**. Each is
+entered as a US ZIP code or a US city name (with its state), or as latitude/longitude by hand
+(non-US), and carries a **label** and a **radius** (miles or km). A user who lives near, not in, a
+city enters the ZIP or coordinates that fit and can edit or re-enter a location at any time. Several
+locations are allowed and every one is scraped.
+* **Fan-out:** every built-in source type that takes a location (Ticketmaster regional, Eventbrite,
+  Meetup, and any later one) runs once per location: its stored URL/settings carry no location of
+  their own any more, the location comes from the list. A regional source's events are stored with
+  the location they came from (item 31 uses it). Per-venue types (`ticketmaster_venue`, `jsonld`, …)
+  are not location-aware and do not fan out.
+* **Resolving ZIP / city to coordinates is OFFLINE** (owner's decision: no lookup leaves the box).
+  The image bundles the US Census Bureau Gazetteer files (ZCTA for ZIP codes and Places for cities;
+  public domain), trimmed to the columns needed (id, name, state, latitude, longitude). An entry that
+  does not resolve is refused with a fixed message; a non-US location is entered as lat/long.
+* **No default locations ship.** A fresh install has an empty list and the location-aware sources
+  do nothing until one is added (as item 29 did for Meetup). Docs and examples use New York and
+  Los Angeles. A deployment's own locations live only in its database or its private config.
+* **Replaces** `city_zip`, `city_name`, `city_radius_miles`, `eventbrite_region` and
+  `meetup_location` (and the Ticketmaster `latlong`/`radius` in the regional source's URL, item 22).
+  Migration: a deployment's existing values become one location (label from `city_name`, or
+  "Default"), and a regional `ticketmaster` URL's `latlong`/`radius` becomes a location; nothing is
+  lost on upgrade. Each location's identity is its label, so a source's event keys must not change
+  when its location list is edited (re-keying = new UIDs, see item 12's note).
+* **Tests:** ZIP, city + state and lat/long resolve from a small synthetic Gazetteer fixture (the
+  real files are not read in tests); an unknown entry is refused; two locations make two requests
+  per location-aware source; an empty list scrapes nothing and records why; the migration turns the
+  old settings into one location; no request carries a lookup to a geocoding service.
+* **Open, not blocking:** the trimmed files' size in the image (a few MB as text; measure at build);
+  refreshing them with each yearly Census release is a manual rebuild.
+
+### 31 — Area feeds — READY (after 30)
+
+**Owner's spec (2026-11-09).** Each search location's label (item 30) is an **area**. Every source
+carries its area (a per-venue source is assigned one by the admin; a location-aware source's events
+carry the location they were found for). Subscribers pick one, several or all areas **without the
+admin disabling any source**:
+* `/feed/area/<label>.ics` per area (beside the existing tag and venue feeds, item 03), with the
+  same stable UIDs: an event in two areas has one UID in both feeds.
+* The events page and calendar get an area filter (one, several, all; default all), kept in the URL
+  so a filtered view can be bookmarked.
+* The import/export file (item 05) carries a source's area.
+* **Tests:** an area feed holds exactly that area's events; an unknown area is a 404; an event two
+  areas share appears in both with one UID; the page filter narrows and combines areas; export then
+  import keeps every area unchanged.
+* **Depends on 30** (the location list and the per-event location).
 

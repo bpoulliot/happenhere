@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 # Filter by location using lat/lon or zip in the search field
 _SEARCH_URL_TPL = "https://www.meetup.com/find/?eventType=inPerson&source=EVENTS&sortField=DATETIME&location={location}&distance=tenMiles"
 _VENUE = ""  # set from config
+MISSING_LOCATION = "Meetup location is not set (Settings): nothing to search"
 
 
 class MeetupScraper(PlaywrightScraper):
@@ -26,9 +27,19 @@ class MeetupScraper(PlaywrightScraper):
     def _city_name(self) -> str:
         return getattr(self.config, "city_name", "") or "Local Events"
 
+    def _location(self) -> str:
+        return (getattr(self.config, "meetup_location", "") or "").strip()
+
     def _get_url(self) -> str:
-        loc = getattr(self.config, "meetup_location", "") or "us--co--Colorado+Springs"
-        return _SEARCH_URL_TPL.format(location=loc)
+        return _SEARCH_URL_TPL.format(location=self._location())
+
+    def scrape(self) -> list[EventData]:
+        # No default location (item 29): an unconfigured source refuses before Chromium starts,
+        # and the run records the reason on the source (``last_error``).
+        if not self._location():
+            log.warning("Meetup: no location set (Settings > Meetup location); not scraped")
+            raise ValueError(MISSING_LOCATION)
+        return super().scrape()
 
     def _scrape_impl(self) -> list[EventData]:
         events: list[EventData] = []
