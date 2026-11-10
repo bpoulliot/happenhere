@@ -11,12 +11,19 @@ from urllib.parse import quote, urlparse
 
 import httpx
 from fastapi import APIRouter, Form, Query, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+)
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import joinedload
 
 from .. import areas as _areas
 from .. import auth as _auth
+from .. import daterange as _daterange
 from .. import digest as _digest
 from .. import locations as _locations
 from .. import oidc as _oidc
@@ -225,12 +232,24 @@ def _fmt_dt(dt: datetime | None) -> str:
     return dt.strftime("%a, %b %-d %Y · %-I:%M %p") if dt.hour else dt.strftime("%a, %b %-d %Y")
 
 
+def _date_window(days: int, date_from: str, date_to: str) -> tuple[_daterange.Window, str]:
+    """The listing's window (item 33) and, when the range cannot be used, the fixed notice
+    text; the window is then the default one (the next ``days`` days)."""
+    try:
+        return _daterange.window(days, date_from, date_to), ""
+    except _daterange.DateRangeInvalid as exc:
+        return _daterange.window(days), _daterange.REASONS[exc.code]
+
+
 def _query_events(
-    session, days=30, category="", source="", search="", area_ids: list[int] | None = None
+    session,
+    win: _daterange.Window,
+    category="",
+    source="",
+    search="",
+    area_ids: list[int] | None = None,
 ) -> dict:
-    now = datetime.now()
-    cutoff = now + timedelta(days=days)
-    q = _areas.in_areas(shown_events(session, now, cutoff), area_ids)
+    q = _areas.in_areas(shown_events(session, win.start, win.end), area_ids)
     rows = q.options(joinedload(Event.source)).order_by(Event.start_dt).all()
     events = [_event_to_dict(e) for e in rows]
     events = _dedup_events(events)
@@ -305,12 +324,15 @@ async def events_page(
     category: str = "",
     search: str = "",
     area: list[str] = Query([]),
+    date_from: str = Query("", alias="from"),
+    date_to: str = Query("", alias="to"),
 ):
+    win, notice = _date_window(days, date_from, date_to)
+    if notice:  # the fields go back blank: the notice says why, the input is never echoed
+        date_from = date_to = ""
     with get_session() as session:
         flt = _area_filter(session, area)
-        data = _query_events(
-            session, days=days, category=category, search=search, area_ids=flt["ids"]
-        )
+        data = _query_events(session, win, category=category, search=search, area_ids=flt["ids"])
         categories = _all_categories(session)
         area_names = ", ".join(flt["labels"]) or _area_names(session)
     return templates.TemplateResponse(
@@ -326,8 +348,17 @@ async def events_page(
             "categories": categories,
             "area_names": area_names,
             "area_choices": flt["choices"],
+            "date_from": date_from,
+            "date_to": date_to,
+            "range_notice": notice,
             "form_action": "/events",
-            "keep": {"days": days, "category": category, "search": search},
+            "keep": {
+                "days": days,
+                "category": category,
+                "search": search,
+                "from": date_from,
+                "to": date_to,
+            },
         },
     )
 
@@ -341,11 +372,14 @@ async def event_list_partial(
     search: str = "",
     limit: int = 100,
     area: list[str] = Query([]),
+    date_from: str = Query("", alias="from"),
+    date_to: str = Query("", alias="to"),
 ):
+    win, notice = _date_window(days, date_from, date_to)
     with get_session() as session:
         data = _query_events(
             session,
-            days=days,
+            win,
             category=category,
             source=source,
             search=search,
@@ -353,7 +387,9 @@ async def event_list_partial(
         )
     events = data["events"][:limit]
     return templates.TemplateResponse(
-        request, "partials/event_list.html", {"request": request, "events": events}
+        request,
+        "partials/event_list.html",
+        {"request": request, "events": events, "range_notice": notice},
     )
 
 
@@ -591,11 +627,18 @@ async def api_events(
     source: str = Query(""),
     search: str = Query(""),
     area: list[str] = Query([]),
+    date_from: str = Query("", alias="from"),
+    date_to: str = Query("", alias="to"),
 ):
+    try:
+        win = _daterange.window(days, date_from, date_to)
+    except _daterange.DateRangeInvalid as exc:  # fixed text per reason, never str(exc)
+        detail = "invalid date range: " + _daterange.REASONS[exc.code]
+        return JSONResponse({"detail": detail}, status_code=400)
     with get_session() as session:
         return _query_events(
             session,
-            days=days,
+            win,
             category=category,
             source=source,
             search=search,

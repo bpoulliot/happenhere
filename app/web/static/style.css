@@ -96,7 +96,7 @@ footer {
   flex-wrap: wrap;
   align-items: center;
 }
-select, input[type=search] {
+select, input[type=search], input[type=date] {
   background: var(--surface2);
   border: 1px solid var(--border);
   color: var(--text);
@@ -107,6 +107,10 @@ select, input[type=search] {
 }
 select:focus, input:focus { border-color: var(--accent); }
 input[type=search] { flex: 1; min-width: 180px; }
+.date-range-label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.9rem; color: var(--text-muted); }
+input[type=date] { color-scheme: dark; }
+.date-range-notice { padding: .75rem 1rem; border-radius: var(--radius); margin-bottom: 1rem; font-size: .9rem;
+  background: #2a1f0f; border: 1px solid var(--warn); color: var(--warn); }
 
 /* ── Event grid ── */
 .event-grid {
@@ -385,6 +389,8 @@ input[type=search] { flex: 1; min-width: 180px; }
 @media (max-width: 640px) {
   .filter-row { flex-direction: column; }
   select, input[type=search] { width: 100%; }
+  .date-range-label { width: 100%; }
+  .date-range-label input { flex: 1; }
   .event-grid { grid-template-columns: 1fr; }
   .cal-grid { font-size: 0.7rem; }
   .cal-cell { min-height: 70px; }

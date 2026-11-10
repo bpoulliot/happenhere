@@ -23,7 +23,7 @@ item that is not READY.
   narrowest count) and the Docker build. `main` takes changes only through a PR with all of them
   green.
 
-**Next free item number: 33.** Always re-read it here before filing.
+**Next free item number: 34.** Always re-read it here before filing.
 
 ## Items
 
@@ -61,6 +61,7 @@ item that is not READY.
 | 30 | 1 | Search locations: one or more ZIP / city / lat-long areas with a radius, resolved offline; location-aware types fan out per area | **DONE** |
 | 31 | 1 | Area feeds: each search location is an area; `/feed/area/<label>.ics` and an area filter on the events page | **DONE** |
 | 32 | 0 | One show listed in one batch under two venue NAMES of one venue (same title, exact start, same street address) is one event | **READY** |
+| 33 | 1 | Date-range filter on the events page and `/api/events` (`?from=` / `?to=`, whole local days) | **DONE** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -1479,3 +1480,65 @@ current rules (items 18, 28). Across runs: the second row retires on the next su
 **Tests first:** two venue names + same address + same start = 1 row; same address + another start =
 2 (item 18); same title + start at two different addresses = 2; an empty address never merges; a
 second run of the batch adds nothing and retires nothing.
+
+### 33 — Date-range filter on the events listing — DONE
+
+**Found 2026-11-10** (owner: "need a filter by date range"). The events page, its live list and
+`/api/events` showed only "the next N days" (`days`, 7 to 90 in the page's select); there was no
+way to look at one weekend a month out, or at a fixed span.
+
+**Spec (2026-11-10).** `/events`, `/partials/event-list` and `/api/events` take `from` and `to`
+(`YYYY-MM-DD`, whole days in the configured zone `Config.tz`, **both inclusive**: `to` reaches
+23:59:59.999999 of that day). A range replaces the `days` window:
+* `from` alone: `days` whole days starting on `from` (`from=2030-06-10&days=1` is that one day;
+  the page's select is the window length). Not open-ended: the select is always sent, so it keeps
+  a meaning.
+* `to` alone: now until the end of `to`.
+* both: `from` until the end of `to`.
+* an empty value is no value (the page's form sends `from=&to=` when the fields are blank).
+* **Nothing before now is ever shown**, as without a range (the listing never showed past events):
+  a `from` before today counts as today and the window starts at now, not at midnight.
+* **Unusable:** a value that is not `YYYY-MM-DD` or not a real date (`bad_date`), `to` before
+  `from` (`reversed`), `to` before today (`past`). The page and the live list show the default
+  window with a notice naming the reason; the API answers 400 with
+  `{"detail": "invalid date range: <reason>"}`. The text is fixed per reason code
+  (`app/daterange.py` `REASONS`, the `app/netguard.py` pattern), never the exception or the input.
+* No upper bound on the span: the rows stored bound it (the scrapers' look-ahead).
+
+**Built.** `app/daterange.py` `window(days, from, to, now)` returns the `[start, end]` and raises
+`DateRangeInvalid(code)`; the routes pass it to `shown_events(session, start, end)`, so retired rows
+stay hidden (item 25). The Python parameters are `date_from` / `date_to` with
+`Query(alias="from")` / `alias="to"`. The page's filter row gained **From** and **To**
+`<input type="date">` fields (htmx refreshes the list on change, as for the other filters); their
+values come back in the fields, and the area filter's hidden fields and "All areas" link carry them
+(item 31's `keep`). An unusable range goes back blank, with the notice. **Behaviour change:** "now"
+for the listing is now the configured zone's wall clock (`datetime.now(tz_of())`, naive), where it
+was the process's local time; the two differ only when the container's `TZ` is not `Config.tz`.
+
+**Tests:** `tests/test_date_range.py` (26). **Failing first** (the first 24 tests against
+`origin/main`): 18 failed, 6 passed. The 6 passing are the guards that hold without a range: the
+range excludes the day after and before, never shows the past, empty values are no range, `days`
+alone is unchanged, a good range has no notice, a retired row stays hidden. The last 2 (the window
+at a fixed `now`) were added after the mutant run below. After: 584 pass.
+
+**Mutants** (each against the full suite, then reverted):
+
+| Mutant | Failing tests |
+|---|---|
+| `to` not inclusive (end at 00:00 of `to`, not 23:59:59.999999) | 7 (the late-evening show on the `to` day, a two-day range, `from` alone, `to` alone, the page, the live list, range + area + category) |
+| the alias dropped (parameters read as `date_from` / `date_to`) | 17 (every test that sends a range) |
+| `from` alone open-ended (`days` ignored) | 1 |
+| no clamp to now (a range starting today starts at midnight) | 0 in the HTTP tests (their past event lies on a previous day): **survived**, so the 2 fixed-`now` window tests were added; then 2 |
+| a reversed range not refused | 3 |
+| a loose date parse (no `YYYY-MM-DD` match: `20300610` accepted) | 1 |
+| the API answers an unusable range with the default view, 200 | 5 |
+| the page's notice not rendered | 2 |
+| the area filter's `keep` drops `from` / `to` | 1 |
+| the query ignores the window's end | 11 |
+
+**Findings, not fixed here:**
+* **The live filters do not update the URL.** The filter row refreshes the list with htmx
+  (`/partials/event-list`) and leaves the page URL as loaded, so a reload or the area filter's
+  "Show" keeps the filters the page was **loaded** with (true of `days`, `category` and `search`
+  since before this item). A range is bookmarkable by URL (`/events?from=...&to=...`).
+* The heading still says "N upcoming" for a range.
