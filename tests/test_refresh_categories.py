@@ -36,7 +36,9 @@ class _Fake(BaseScraper):
         self.url = source_url
 
     def scrape(self) -> list[EventData]:
-        return [EventData(**{**e.__dict__, "categories": list(e.categories)}) for e in BATCHES[self.url]]
+        return [
+            EventData(**{**e.__dict__, "categories": list(e.categories)}) for e in BATCHES[self.url]
+        ]
 
 
 @pytest.fixture
