@@ -321,6 +321,11 @@ input[type=search] { flex: 1; min-width: 180px; }
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
+/* The cell stays a table cell (it spans the row, so its border lines up and vertical-align
+   centres it); only the wrapper inside is a flex row. A flex <td> stops being a cell. */
+.source-table .actions-cell { white-space: nowrap; }
+.row-actions { display: flex; gap: 0.5rem; align-items: center; }
+.row-actions form { display: flex; margin: 0; }
 .source-table tr.row-error td { background: #1a0f0f; }
 .source-table tr:hover td { background: var(--surface2); }
 .src-name { font-weight: 600; }
