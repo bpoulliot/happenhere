@@ -20,10 +20,15 @@
       {% endfor %}
     </select>
     <input type="search" name="search" placeholder="Search events…" value="{{ search }}">
+    {# Item 33: a date range replaces the "Next N days" window (from alone: N days from that day). #}
+    <label class="date-range-label">From <input type="date" name="from" value="{{ date_from }}" aria-label="From date"></label>
+    <label class="date-range-label">To <input type="date" name="to" value="{{ date_to }}" aria-label="To date"></label>
     {% for a in area_choices if a.checked %}<input type="hidden" name="area" value="{{ a.slug }}">{% endfor %}
   </form>
   {% include "partials/area_filter.html" %}
 </div>
+
+{% if range_notice %}<p class="date-range-notice" role="status">That date range could not be used: {{ range_notice }}. Showing the next {{ days }} days.</p>{% endif %}
 
 <div id="event-grid" class="event-grid">
   {% if events %}

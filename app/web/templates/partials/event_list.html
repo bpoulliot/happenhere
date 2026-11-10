@@ -1,3 +1,4 @@
+{% if range_notice %}<p class="date-range-notice" role="status">That date range could not be used: {{ range_notice }}. Showing the default window.</p>{% endif %}
 {% if events %}
 <div class="event-grid">
   {% for ev in events %}

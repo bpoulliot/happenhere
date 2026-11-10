@@ -340,3 +340,29 @@ def test_a_retired_row_stays_hidden_in_a_range(client):
     assert "Called Off" not in _titles(api)
     assert "Called Off" not in page.text
     assert "Called Off" not in part.text
+
+
+# ---------------------------------------------------------------------------
+# The window itself, at a fixed now (added after the failing-first run: the "no clamp to now"
+# mutant survived the HTTP tests, whose past event lies on a previous day)
+# ---------------------------------------------------------------------------
+
+
+def test_a_range_starting_today_starts_at_now_not_midnight():
+    from app.daterange import window
+
+    now = datetime(2030, 6, 10, 15, 0)
+    w = window(30, "2030-06-10", "2030-06-12", now=now)
+    assert (w.start, w.end) == (now, datetime(2030, 6, 12, 23, 59, 59, 999999))
+    w = window(30, "2030-06-01", "", now=now)  # a past from counts as today
+    assert (w.start, w.end) == (now, datetime(2030, 7, 9, 23, 59, 59, 999999))
+
+
+def test_a_range_on_a_later_day_starts_at_its_midnight():
+    from app.daterange import window
+
+    now = datetime(2030, 6, 10, 15, 0)
+    w = window(30, "", "2030-06-11", now=now)
+    assert (w.start, w.end) == (now, datetime(2030, 6, 11, 23, 59, 59, 999999))
+    w = window(1, "2030-06-11", "", now=now)
+    assert (w.start, w.end) == (datetime(2030, 6, 11), datetime(2030, 6, 11, 23, 59, 59, 999999))
