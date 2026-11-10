@@ -23,7 +23,7 @@ item that is not READY.
   narrowest count) and the Docker build. `main` takes changes only through a PR with all of them
   green.
 
-**Next free item number: 34.** Always re-read it here before filing.
+**Next free item number: 35.** Always re-read it here before filing.
 
 ## Items
 
@@ -62,6 +62,7 @@ item that is not READY.
 | 31 | 1 | Area feeds: each search location is an area; `/feed/area/<label>.ics` and an area filter on the events page | **DONE** |
 | 32 | 0 | One show listed in one batch under two venue NAMES of one venue (same title, exact start, same street address) is one event | **READY** |
 | 33 | 1 | Date-range filter on the events page and `/api/events` (`?from=` / `?to=`, whole local days) | **DONE** |
+| 34 | 0 | A re-scraped event's categories never reached its stored row: a row kept its first scrape's categories | **DONE** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -1542,3 +1543,30 @@ at a fixed `now`) were added after the mutant run below. After: 584 pass.
   "Show" keeps the filters the page was **loaded** with (true of `days`, `category` and `search`
   since before this item). A range is bookmarkable by URL (`/events?from=...&to=...`).
 * The heading still says "N upcoming" for a range.
+
+### 34 — A re-scraped event's categories reach its stored row — DONE
+
+**Found 2026-11-10** by a deployment: the operator added a `hockey` category to two team-schedule
+sources so their games would show under the events page's Hockey category; a re-scrape updated
+all 40 rows (none new) and none of them gained it. `dedup._refresh` refreshed a seen row's title,
+description, end, address, URL and image, never its categories, so a row kept its FIRST scrape's
+categories forever: a source's new category, or a platform re-labelling an event's genre, never
+reached the filter or the tag-less category list.
+
+**Spec (owner, 2026-11-10):** a scrape that returns a seen row with categories updates them. The
+row's OWN source replaces them with the scrape's; ANOTHER source merging into the row (same dedup
+hash, item 15/28) adds its categories after the row's, removing none and repeating none (compared
+without case). A scrape without categories changes nothing (the job tags an event with its
+source's categories only when it has none, so that case is a source with none).
+
+**Built:** `app/dedup.py` `_merged_categories(row, ev, source_id)`, called from `_refresh`, which
+now takes the batch's `source_id` (all five call sites).
+
+**Failing first** (`tests/test_refresh_categories.py` against `origin/main`): 3 failed, 2 passed.
+Failures: a source's new category reaching an existing row, an event's own new categories
+replacing the row's, another source's categories added on a merge. The 2 passing are the guards:
+a scrape without categories keeps the row's; a merge never repeats a category.
+
+**Mutants** (each against the full suite, then reverted):
+* another source REPLACES instead of adding (`row.source_id == source_id` always true): 2 failed.
+* the repeat check compares with case: 1 failed (`test_a_merge_does_not_repeat_a_category`).

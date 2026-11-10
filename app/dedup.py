@@ -158,7 +158,7 @@ def upsert_events(
             row = session.query(Event).filter_by(identity_key=key).first()
         if row is not None:
             per_event.append(row)
-            _refresh(row, ev)
+            _refresh(row, ev, source_id)
             # The source says this is the same event, so its time and venue are current too.
             row.start_dt = ev.start_dt
             row.venue_name = ev.venue_name or row.venue_name
@@ -176,13 +176,15 @@ def upsert_events(
         if h in batch:
             first, first_key = batch[h]
             if key is None or key == first_key or ev.start_dt == batch_start.get(h):
-                _refresh(first, ev)  # the same event listed twice (item 28: under two ids)
+                _refresh(
+                    first, ev, source_id
+                )  # the same event listed twice (item 28: under two ids)
                 per_event.append(first)
                 updated_count += 1
                 continue
             h = timed_hash(ev)  # a different event with the same title, day and venue
             if h in batch:
-                _refresh(batch[h][0], ev)
+                _refresh(batch[h][0], ev, source_id)
                 per_event.append(batch[h][0])
                 updated_count += 1
                 continue
@@ -192,7 +194,7 @@ def upsert_events(
         if match == DIFFERENT:
             h = timed_hash(ev)  # stored in an earlier run: the same rule as within a batch
             if h in batch:
-                _refresh(batch[h][0], ev)
+                _refresh(batch[h][0], ev, source_id)
                 per_event.append(batch[h][0])
                 updated_count += 1
                 continue
@@ -220,7 +222,7 @@ def upsert_events(
             session.add(row)
             new_count += 1
         else:
-            _refresh(row, ev)
+            _refresh(row, ev, source_id)
             if match == MOVED:  # the same event, its time moved within the day (item 15)
                 row.start_dt = ev.start_dt
                 row.venue_name = ev.venue_name or row.venue_name
@@ -279,15 +281,37 @@ def legacy_uid(dedup_hash: str) -> str:
     return f"{dedup_hash}@peakevents"
 
 
-def _refresh(row: Event, ev: EventData) -> None:
+def _refresh(row: Event, ev: EventData, source_id: int) -> None:
     row.last_seen = datetime.now()
     row.retired_at = None  # returned again: un-retired, with the UID it always had (item 25)
     row.title = ev.title
+    row.categories = _merged_categories(row, ev, source_id)
     row.description = ev.description or row.description
     row.end_dt = ev.end_dt or row.end_dt
     row.venue_addr = ev.venue_addr or row.venue_addr
     row.url = ev.url or row.url
     row.image_url = ev.image_url or row.image_url
+
+
+def _merged_categories(row: Event, ev: EventData, source_id: int) -> str | None:
+    """The row's categories after a scrape returned it (item 34).
+
+    No categories in the scrape: unchanged. The row's OWN source: replaced by the scrape's (a
+    source given a new category, or a platform's re-labelled genre, reaches the row). ANOTHER
+    source merging into the row: its categories are added after the row's, none removed, none
+    repeated (compared without case).
+    """
+    if not ev.categories:
+        return row.categories
+    if row.source_id == source_id:
+        return json.dumps(list(ev.categories))
+    current = json.loads(row.categories or "[]")
+    have = {c.lower() for c in current}
+    for c in ev.categories:
+        if c.lower() not in have:
+            current.append(c)
+            have.add(c.lower())
+    return json.dumps(current)
 
 
 def _hash_used(session: Session, h: str) -> bool:
