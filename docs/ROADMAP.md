@@ -23,7 +23,7 @@ item that is not READY.
   narrowest count) and the Docker build. `main` takes changes only through a PR with all of them
   green.
 
-**Next free item number: 32.** Always re-read it here before filing.
+**Next free item number: 33.** Always re-read it here before filing.
 
 ## Items
 
@@ -60,6 +60,7 @@ item that is not READY.
 | 29 | 0 | No deployment location in the repository: example values, a default Meetup location, test addresses | **DONE** |
 | 30 | 1 | Search locations: one or more ZIP / city / lat-long areas with a radius, resolved offline; location-aware types fan out per area | **DONE** |
 | 31 | 1 | Area feeds: each search location is an area; `/feed/area/<label>.ics` and an area filter on the events page | **DONE** |
+| 32 | 0 | One show listed in one batch under two venue NAMES of one venue (same title, exact start, same street address) is one event | **READY** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -1451,3 +1452,30 @@ pass. The existing feeds are byte-identical before and after areas are added to 
 * **A location-aware source's `area:` is only a fallback**: its events carry the locations they were
   found for, and a search that found nothing links nothing.
 
+### 32 — One show under two venue names of one venue is one event — READY
+
+**Found 2026-11-10** by a deployment (counts only here; the measurement stays with it). A regional
+`ticketmaster` batch returned 2 shows twice each: the same title at the **exact same start**, under
+two venue records of ONE building, e.g. "Example Theater" and "Example Theatre-NY". Item 28 merges
+two ids only when the dedup hash (title + day + **venue name**) matches, so another venue name is
+another event and the feed shows the show twice. A deployment's own per-venue plugin had the same
+case (one source, several venue ids, the building named differently: 16 shows) and fixed it in the
+plugin; the built-in types still have it.
+
+**Measured (2026-11-10, Discovery API by event id):** for both shows the two venue records differ
+in id and name, share the **street address line and postal code**, and their coordinates are
+~500 m apart. So coordinates are not the key (a tight distance misses this case, a loose one merges
+neighbouring venues); the normalised address is.
+
+**Spec (recommended):** within one batch, an event whose normalised title and **exact start** equal
+an earlier event's, and whose venue has the same normalised street address line + postal code, is
+the same event: it refreshes that row (the first venue name is kept), no new row. Normalise: case,
+whitespace, punctuation, and the common street abbreviations (`St`/`Street`, `Ave`/`Avenue`,
+`W`/`West`, ...). Needs the venue address on `EventData` (the Ticketmaster parser has it; other types
+leave it empty, and an empty address never matches). Different start, title or address keeps the
+current rules (items 18, 28). Across runs: the second row retires on the next successful run
+(item 25), as in item 28.
+
+**Tests first:** two venue names + same address + same start = 1 row; same address + another start =
+2 (item 18); same title + start at two different addresses = 2; an empty address never merges; a
+second run of the batch adds nothing and retires nothing.
