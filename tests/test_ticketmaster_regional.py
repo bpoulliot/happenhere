@@ -359,6 +359,29 @@ def test_a_capped_scrape_records_the_warning_and_retires_nothing(fake, stored, m
     assert _source().last_error is None
 
 
+def test_a_complete_windowed_scrape_retires_only_up_to_its_latest_event(fake, stored, monkeypatch):
+    """Item 26 on item 22's date windows: the windows tile the look-ahead, but the cut is still
+    the latest event read. An event dropped before it retires; one dropped past it stays until
+    a later event moves the cut past it."""
+    base = datetime.now(UTC).replace(microsecond=0)
+    monkeypatch.setattr(ticketmaster, "_now", lambda: base)
+    early, mid, late = (base + timedelta(days=n) for n in (2, 10, 40))
+    fake.events = {"12.5,-45.25": [("a", early), ("b", mid), ("c", late)]}
+    jobs.run_all_scrapers()
+    fake.events = {"12.5,-45.25": [("b", mid)]}  # a and c dropped; the cut is b's start
+    jobs.run_all_scrapers()
+
+    def retired() -> dict[str, bool]:
+        with db.get_session() as s:
+            return {e.title[-1]: e.retired_at is not None for e in s.query(Event).all()}
+
+    assert retired() == {"a": True, "b": False, "c": False}
+    assert _source().last_error is None  # complete: no warning
+    fake.events = {"12.5,-45.25": [("b", mid), ("d", base + timedelta(days=50))]}
+    jobs.run_all_scrapers()
+    assert retired() == {"a": True, "b": False, "c": True, "d": False}
+
+
 def test_no_apikey_in_the_captured_logs(fake, stored):
     root = logging.getLogger()
     saved = root.handlers[:], root.level, logging.getLogRecordFactory()
