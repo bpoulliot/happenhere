@@ -54,7 +54,7 @@ item that is not READY.
 | 23 | 1 | JSON-LD: events listed under a `Place`'s capitalised `Events` key are missed by detection and the scraper | **DONE** |
 | 24 | 1 | Import: a disabled entry whose URL fails the network guard is stored disabled, not a refused file | **DONE** |
 | 25 | 0 | A same-title show first seen in a later run gets its own row; rows a source stops listing retire | **DONE** |
-| 26 | 0 | Scrapers that can return a truncated list retire events that are still on (item 25) | DONE |
+| 26 | 0 | Scrapers that can return a truncated list retire events that are still on (item 25) | **DONE** |
 | 27 | 1 | A second show of a day (stored under `timed_hash`) whose time moves gets a new row and UID (item 15) | **NEEDS DECISION** |
 | 28 | 0 | One show listed twice in one batch under two ids (same title, venue and exact start) is one event | **DONE** |
 | 29 | 0 | No deployment location in the repository: example values, a default Meetup location, test addresses | **DONE** |
