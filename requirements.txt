@@ -11,7 +11,7 @@ feedgen==1.0.0
 apscheduler==3.11.3
 sqlalchemy==2.0.51
 cloudscraper==1.2.71
-playwright==1.60.0
+playwright==1.64.1
 pyyaml==6.0.3
 bcrypt==5.0.0
 authlib==1.9.4
