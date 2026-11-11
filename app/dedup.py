@@ -10,7 +10,7 @@ from urllib.parse import urldefrag
 
 from sqlalchemy.orm import Session
 
-from .models import Event, Source
+from .models import Event, EventLocation, Source
 from .scrapers.base import EventData
 
 log = logging.getLogger(__name__)
@@ -244,25 +244,60 @@ def upsert_events(
     return new_count, updated_count
 
 
-def retire_unreturned(session: Session, source_id: int, returned: set[int], now: datetime) -> int:
-    """Retire the source's upcoming rows that its scrape did not return (item 25).
+def retire_unreturned(
+    session: Session,
+    source_id: int,
+    returned: set[int],
+    now: datetime,
+    cut: datetime | None,
+    cuts: dict[int, datetime] | None = None,
+) -> int:
+    """Retire the source's upcoming rows that its scrape did not return (item 25), up to the
+    latest event it returned (item 26).
 
     ``returned`` holds the rows the upsert resolved this batch to (its own identity: the
     identity key, else the dedup hash), so an unchanged event is never retired; the caller
     adds the rows other sources returned earlier in the same run, so a row that another source
     merged into and still lists is kept. Call it only after a scrape that succeeded with at
     least one event: a failed or empty scrape retires nothing (item 06's canary owns that).
+
+    ``cut`` is the latest start the scrape returned, this source's own (item 26): a list cut
+    off at its far end (a fixed scroll count, one page of a paged list, a results cap) says
+    nothing about what lies past its last event, so only a row starting **before** the cut
+    retires; a row at or past it is kept. A scrape that returned no start (``cut`` None)
+    retires nothing. ``cuts`` (a location-aware source, item 30) is the same per searched
+    location: a row linked to any searched location is judged against the latest of those
+    locations' cuts (each location's list is its own list, with its own far end); a row linked
+    to none of them (stored before item 30, or found for a location the source no longer
+    searches) is judged against ``cut``.
+
     Nothing is deleted and nothing else changes, ``last_seen`` included. Returns the count.
     """
-    ids = [
-        row_id
-        for (row_id,) in session.query(Event.id).filter(
+    if cut is None:
+        return 0
+    bound = max([cut, *cuts.values()]) if cuts else cut  # no row at or past every cut retires
+    candidates = [
+        (row_id, start)
+        for (row_id, start) in session.query(Event.id, Event.start_dt).filter(
             Event.source_id == source_id,
             Event.retired_at.is_(None),
             Event.start_dt >= now,
+            Event.start_dt < bound,
         )
         if row_id not in returned
     ]
+    if not candidates:
+        return 0
+    linked: dict[int, datetime] = {}  # row id -> the latest cut among its searched locations
+    if cuts:
+        for ev_id, loc_id in session.query(
+            EventLocation.event_id, EventLocation.location_id
+        ).filter(
+            EventLocation.event_id.in_([i for i, _ in candidates]),
+            EventLocation.location_id.in_(list(cuts)),
+        ):
+            linked[ev_id] = max(linked.get(ev_id, cuts[loc_id]), cuts[loc_id])
+    ids = [row_id for row_id, start in candidates if start < linked.get(row_id, cut)]
     if ids:
         session.query(Event).filter(Event.id.in_(ids)).update(
             {Event.retired_at: now, Event.last_seen: Event.last_seen}, synchronize_session=False

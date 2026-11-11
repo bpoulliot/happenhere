@@ -46,7 +46,6 @@ def _scrape_variant_a(soup: BeautifulSoup, venue: str, url: str) -> list[EventDa
     """Variant A: .calendar-day-event cards with .ev-title / .ev-date / .ev-time."""
     events: list[EventData] = []
     now = datetime.now()
-    seen: set[str] = set()
 
     for card in soup.select(".calendar-day-event"):
         title_el = card.select_one(".ev-title")
@@ -60,11 +59,6 @@ def _scrape_variant_a(soup: BeautifulSoup, venue: str, url: str) -> list[EventDa
         start_dt = _parse_full_date(date_el.get_text(strip=True), time_el)
         if not start_dt or start_dt < now:
             continue
-
-        key = f"{title}|{start_dt.date()}"
-        if key in seen:
-            continue
-        seen.add(key)
 
         img_src = _img_src(img_el)
         link = card.find("a")
@@ -85,7 +79,6 @@ def _scrape_variant_b(soup: BeautifulSoup, venue: str, url: str) -> list[EventDa
     """Variant B: .event-text-holder cards with h2 + .event-main-text.event-day."""
     events: list[EventData] = []
     now = datetime.now()
-    seen: set[str] = set()
     current_year = now.year
 
     for card in soup.select(".event-text-holder"):
@@ -101,11 +94,6 @@ def _scrape_variant_b(soup: BeautifulSoup, venue: str, url: str) -> list[EventDa
         start_dt = _parse_noyear_date(date_str, current_year, now)
         if not start_dt:
             continue
-
-        key = f"{title}|{start_dt.date()}"
-        if key in seen:
-            continue
-        seen.add(key)
 
         if time_el:
             start_dt = _apply_time(start_dt, time_el.get_text(strip=True))

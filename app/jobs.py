@@ -112,6 +112,7 @@ def _run_source(
     failures: list[str] = []
     complete = True
     searched: set[int] = set()
+    cuts: dict[int, datetime] = {}  # location id -> the latest start its search returned
     for n, area in enumerate(areas, 1):
         scraper = get_scraper(src, cfg, location=area)
         try:
@@ -129,6 +130,8 @@ def _run_source(
         complete = complete and not getattr(scraper, "incomplete", False)
         prior = dict(index)  # only earlier locations' events: one location's own list is kept
         for ev in got:
+            if ev.start_dt is not None:
+                cuts[area.id] = max(cuts.get(area.id, ev.start_dt), ev.start_dt)
             k = (identity_key(ev, src), ev.dedup_hash, ev.start_dt)
             if k in prior:
                 where[prior[k]].add(area.id)
@@ -147,6 +150,7 @@ def _run_source(
         warnings=warnings,
         complete=complete and not failures,
         rows=rows,
+        cuts=cuts,
     )
     found: dict[int, set[int]] = {}
     for row, locs in zip(rows, where, strict=True):
@@ -168,14 +172,18 @@ def _store(
     warnings: list[str],
     complete: bool,
     rows: list | None = None,
+    cuts: dict[int, datetime] | None = None,
 ) -> tuple[int, int, int]:
     """Store one successful scrape of ``src``; returns (new, updated, retired).
 
     ``seen`` is the rows earlier sources returned in this run, and gains this scrape's. Only a
     scrape with at least one event retires anything (item 25), and only one that read all it
     meant to: a scraper that sets ``incomplete`` (item 22: an API cap or a request ceiling)
-    retires nothing, and its ``warnings`` become the source's ``last_error``. ``rows`` receives
-    the row of each event, in order (``upsert_events``).
+    retires nothing, and its ``warnings`` become the source's ``last_error``. What it retires
+    stops at the latest start this scrape returned (item 26, ``retire_unreturned``): the cut is
+    this source's own, never the run's. ``cuts`` is the same per search location for a
+    location-aware source (``_run_source``). ``rows`` receives the row of each event, in order
+    (``upsert_events``).
     """
     started = datetime.now()
     src_cats = json.loads(src.categories or "[]")
@@ -185,7 +193,10 @@ def _store(
     returned: set[int] = set()
     new, updated = upsert_events(session, events, src.id, returned=returned, rows=rows)
     seen |= returned
-    retired = retire_unreturned(session, src.id, seen, started) if events and complete else 0
+    cut = max((ev.start_dt for ev in events if ev.start_dt is not None), default=None)
+    retired = (
+        retire_unreturned(session, src.id, seen, started, cut, cuts) if events and complete else 0
+    )
     src.last_scraped = datetime.now()
     src.error_count = 0
     src.last_error = redact("; ".join(warnings)) if warnings else None
