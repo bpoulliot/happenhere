@@ -54,7 +54,7 @@ item that is not READY.
 | 23 | 1 | JSON-LD: events listed under a `Place`'s capitalised `Events` key are missed by detection and the scraper | **DONE** |
 | 24 | 1 | Import: a disabled entry whose URL fails the network guard is stored disabled, not a refused file | **DONE** |
 | 25 | 0 | A same-title show first seen in a later run gets its own row; rows a source stops listing retire | **DONE** |
-| 26 | 0 | Scrapers that can return a truncated list retire events that are still on (item 25) | **NEEDS DECISION** |
+| 26 | 0 | Scrapers that can return a truncated list retire events that are still on (item 25) | **DONE** |
 | 27 | 1 | A second show of a day (stored under `timed_hash`) whose time moves gets a new row and UID (item 15) | **NEEDS DECISION** |
 | 28 | 0 | One show listed twice in one batch under two ids (same title, venue and exact start) is one event | **DONE** |
 | 29 | 0 | No deployment location in the repository: example values, a default Meetup location, test addresses | **DONE** |
@@ -1189,10 +1189,14 @@ event retires it until it is listed again):
 Filed as **item 26**. Not a STOP: retirement is reversible and a retired row comes back, UID and
 all, when it is listed again.
 
+The table is what the code did when this item shipped: item 26 removed the per-title-per-day
+de-duplication in `eventbrite` and `spothopper`, and caps the retirement at the latest event a
+scrape returned.
+
 **Item 15 landed on top of this:** `is_different_event` is now `hash_match`, which also says when a
 dedup-hash match is the same `slot` event with a moved time (updated in place, same UID).
 
-### 26 — Scrapers that can return a truncated list retire events that are still on — NEEDS DECISION
+### 26 — Scrapers that can return a truncated list retire events that are still on — DONE
 
 **Found by item 25.** Item 25 retires a source's upcoming rows that a successful scrape (at least
 one event) did not return. Every built-in type except `fathom` can return less than the source's
@@ -1215,6 +1219,77 @@ scrape lists it again; in a calendar app it disappears and comes back.
 
 **Measure first if wanted:** the retired count per source over a few runs of a deployment says
 which types truncate in practice; item 25's first deployment recorded one run.
+
+**Decided (owner, 2026-11-10): (c), for every type, plugin types included, no per-type flag;
+and the per-title-per-day de-duplication in `eventbrite` and `spothopper` is removed** (item
+18's `timed_hash` already keeps two shows apart). A successful scrape retires only the source's
+rows that start **before the latest event the scrape returned**; a list cut off at its far end
+retires nothing past the cut. "Latest" is the source's own, never the run's: item 25's
+cross-source `seen` protection stays as it is.
+
+**Built.**
+* **The rule, in one place:** `app/dedup.py` `retire_unreturned(session, source_id, returned,
+  now, cut, cuts=None)`. `cut` is the latest start the scrape returned; a candidate row retires
+  only when it was not returned, starts after the scrape began (item 25) and starts **strictly
+  before** the cut. `cuts` is the same per searched location for a location-aware source (item
+  30): a row linked (`event_locations`) to any searched location is judged against the **latest**
+  of its linked locations' cuts; a row linked to none of them is judged against `cut`.
+* `app/jobs.py` `_store` computes `cut` from the batch (`max` of the events' starts, start-less
+  events skipped) and `_run_source` records each location's own latest start while it merges the
+  fan-out, so each location's list keeps its own far end.
+* `app/scrapers/eventbrite.py` and `app/scrapers/_spothopper_base.py` (both variants) no longer
+  keep one event per title and day.
+
+**The cut, case by case** (every case has a test in `tests/test_truncation_cut.py` unless
+noted):
+
+| Case | Cut | Why |
+|---|---|---|
+| a plain list (one page, a fixed scroll count, an iCal export, a plugin type) | the latest start returned | the list may have stopped anywhere past its last event |
+| a row not returned, before the cut | retires | the list reached past it and did not list it |
+| a row not returned, at the same start as the cut | kept | the list may have been cut between two shows at one time; only `<` is safe |
+| a row not returned, past the cut | kept, un-retired, until a later scrape's cut passes it | nothing in the list says it is gone; it retires once the list reaches past it again |
+| item 30's per-area fan-out (Ticketmaster regional, Eventbrite, Meetup, a plugin with `LOCATION_AWARE`) | one cut per searched location; a row linked to any of them takes the **latest** of its linked locations' cuts; a row linked to none (stored before item 30, or found for a location the source no longer searches) takes the source's own cut | each location's search is its own list; a location whose list reached past the row without it says the row is gone, whatever a shorter list elsewhere says. A failed location already retires nothing (item 30) |
+| item 22's Ticketmaster date windows, complete | the latest event read, as for any list | the windows tile the look-ahead, but the rule is one rule; an event dropped between the latest one and the look-ahead end stays until a later event moves the cut past it (`tests/test_ticketmaster_regional.py`, `test_a_complete_windowed_scrape_retires_only_up_to_its_latest_event`) |
+| item 22's `incomplete` scrape (a window over the cap at one day, the request ceiling) | nothing retires | unchanged from item 22: the scrape did not read all it meant to |
+| a scrape whose events are all past | nothing retires | the cut is before now, and only rows after the scrape began are candidates |
+| a scrape whose events are all on one day | the day's latest start | rows before it retire, the day's own rows are returned, later days are kept |
+| a returned event with no start | the scrape fails for the source, nothing stored, nothing retires | `EventData.start_dt` is required; the upsert refuses it and the source records the error. `_store` skips a start-less event when it computes the cut anyway |
+| a failed scrape, a 0-event scrape, an unchanged event, a row another source returned this run | nothing retires | item 25's guards, unchanged (`tests/test_retire.py`) |
+| a retired row returned again | un-retired with the UID it always had | item 25, unchanged |
+
+**The in-scraper de-duplication survey** (every `seen` set in the built-in types):
+
+| Type | Key | Verdict |
+|---|---|---|
+| `eventbrite` | title (40 chars) + day | dropped a real second show: **removed** |
+| `spothopper`, variants A and B | title + day | dropped a real second show: **removed** |
+| `_html_base.extract_jsonld_events` (`jsonld`, `playwright_jsonld`, `squarespace`) | URL + full start, else name + full start | two shows at two times differ; it drops only one event listed twice on a page |
+| `fathom` | title + day | drops a repeated date, not a second show: its date list carries no time, so two screenings on one day parse to one start and would be one event anyway (item 28). Not filed |
+| `ticketmaster` | the platform's event id across windows | not a per-day key |
+| `ticketmaster_venue`, `meetup`, `ical`, `generic` | none | — |
+
+**Failing first** (`tests/test_truncation_cut.py` and the Ticketmaster window test against a
+`git archive` of `origin/main` before the change): 13 failed, 3 passed. The failures: the
+truncated list, the row before the cut, the row at the cut, the source's own cut, the all-past
+scrape, the one-day scrape, the two fan-out tests, Eventbrite's and both spothopper variants'
+two shows, the plugin type, and the windowed Ticketmaster scrape. The 3 that passed are the
+guards: a start-less event fails the scrape, a failed or empty scrape retires nothing, a
+returned row is un-retired with its UID.
+
+**Mutants** (each against the full suite, 604 tests, then restored):
+| Mutant | Killed by |
+|---|---|
+| the cut ignored (item 25's behaviour) | 9 failed: every cut test, both fan-out tests, the plugin type |
+| the cut taken across every source of the run (the run's latest row) | `test_the_cut_is_the_sources_own_never_the_runs` |
+| `<` the cut made `<=` | `test_a_row_with_the_same_start_as_the_cut_is_kept` |
+| the per-title-per-day de-dup restored in `eventbrite` | `test_eventbrite_keeps_two_same_title_shows_on_one_day` |
+| the same restored in both `spothopper` variants | both `test_spothopper_keeps_two_same_title_shows_on_one_day` cases |
+| the fan-out judged against the source's cut, not each location's | `test_each_locations_list_has_its_own_cut` |
+| the fan-out taking the **earliest** of a row's linked cuts instead of the latest | `test_each_locations_list_has_its_own_cut` |
+
+A deployment's own before/after count per source type is the deployment's record, not this
+file's (the tail's "Run output" rule).
 
 ### 27 — A second show whose time moves gets a new row and UID — NEEDS DECISION
 

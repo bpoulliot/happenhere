@@ -63,7 +63,6 @@ class EventbriteScraper(PlaywrightScraper):
     def _scrape_impl(self) -> list[EventData]:
         events: list[EventData] = []
         now = datetime.now()
-        seen: set[str] = set()
         page = self._get_page()
 
         try:
@@ -95,11 +94,6 @@ class EventbriteScraper(PlaywrightScraper):
             start_dt = _parse_date_from_text(card_text, year, now)
             if not start_dt or start_dt < now:
                 continue
-
-            key = f"{title[:40]}|{start_dt.date()}"
-            if key in seen:
-                continue
-            seen.add(key)
 
             img = card.select_one("img.event-card-image")
             img_src = img.get("src") if img else None
