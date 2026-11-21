@@ -65,7 +65,7 @@ item that is not READY.
 | 32 | 0 | One show listed in one batch under two venue NAMES of one venue (same title, exact start, same street address) is one event | **READY** |
 | 33 | 1 | Date-range filter on the events page and `/api/events` (`?from=` / `?to=`, whole local days) | **DONE** |
 | 34 | 0 | A re-scraped event's categories never reached its stored row: a row kept its first scrape's categories | **DONE** |
-| 35 | 2 | Docs-only PRs skip CI's heavy steps (every required check still reports); a duplicate-roadmap-number check | **READY** |
+| 35 | 2 | Docs-only PRs skip CI's heavy steps (every required check still reports); a duplicate-roadmap-number check | **DONE** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -1649,7 +1649,7 @@ a scrape without categories keeps the row's; a merge never repeats a category.
 * another source REPLACES instead of adding (`row.source_id == source_id` always true): 2 failed.
 * the repeat check compares with case: 1 failed (`test_a_merge_does_not_repeat_a_category`).
 
-### 35 — Docs-only PRs skip CI's heavy steps; a duplicate-roadmap-number check — READY
+### 35 — Docs-only PRs skip CI's heavy steps; a duplicate-roadmap-number check — DONE
 
 **Why** (the owner's backlog, I295, 2026-11-21): a PR that changes only prose Markdown (a roadmap
 entry, a measurement write-up) ran the whole workflow, twice: the `pull_request` run and a `push`
@@ -1692,3 +1692,23 @@ to import (`FileNotFoundError: tools/check_roadmap_numbers.py`), so every test e
 * detector: an empty diff is docs-only: 2. `CODE_DIRS` ignored: 5 subtests. The `.md` suffix rule
   ignored: 3 tests. Renames followed (`--no-renames` dropped, a `.py` renamed to `.md`): 1. A
   two-dot diff (a `main` commit the branch lacks counted): 1.
+
+**DONE 2026-11-21: PR #57** (the change; it ran the full lane, `docs_only=false`) and **PR #58** (this
+docs-only PR, which proves the docs lane).
+* **Required checks unchanged.** `main`'s ruleset (`gh api repos/<owner>/happenhere/rules/branches/main`)
+  required `Lint & Security`, `Tests (Python 3.12)`, `CodeQL` and `Docker Build & Scan` before #57,
+  and the same four after it. The JSON was identical before and after.
+* **#57 ran only its `pull_request` run**, with no second `push` run of the branch, and came up
+  mergeable on it. The `push` run on `main` after the merge skipped the detector and ran in full:
+  every job green, and Publish to GHCR ran as before.
+* **The docs lane, measured on #58** (its first push, run 44937258511, GitHub-hosted runners): all
+  five jobs `success`, Publish skipped as on every PR. **31 s** from created to completed. Detector
+  4 s; Lint & Security 12 s (checkout, roadmap numbers, gitleaks; 8 steps skipped, among them
+  setup-python, the installs, ruff, black, hadolint, bandit and pip-audit); Tests 5 s (the 22
+  Markdown-reading tests by `unittest`; setup-python, install and pytest skipped); CodeQL 4 s and
+  Docker Build & Scan 7 s (every step skipped).
+* **Before, on #53** (the last docs-only PR before #57, `docs/ROADMAP.md` only): its
+  `pull_request` run 42874689819 took **122 s** (Lint 40 s, Tests 60 s, CodeQL 69 s, Docker 54 s),
+  and the `push` run of its branch on the same SHA (42874680107) took **179 s** more in parallel
+  (CodeQL 175 s). That is about 556 job-seconds, against 32 now. One run of each, so these are
+  anecdotes of the size of the saving, not a distribution.
