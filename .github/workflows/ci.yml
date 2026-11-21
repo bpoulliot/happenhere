@@ -6,7 +6,7 @@ concurrency:
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
     branches: [main]
   schedule:
@@ -15,11 +15,51 @@ on:
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
 
+# Docs-only PRs (roadmap 35). A pull request whose every changed file is prose
+# Markdown still runs all four required jobs, and each still reports, so no
+# required check ever goes missing (`paths-ignore` or `[skip ci]` would leave
+# the PR waiting for one forever). Only their heavy steps (setup-python,
+# installs, ruff, black, hadolint, bandit, pip-audit, the suite, CodeQL, the
+# image build and scan) carry `if: needs.changes.outputs.docs_only != 'true'`.
+# What still runs in the docs lane: the gitleaks secret scan, the roadmap
+# duplicate-number check, and the tests that read Markdown
+# (tests/test_ci_tools.py reads docs/ROADMAP.md), with the runner's python3.
+# Fail open: on a push or a schedule `changes` is skipped, and when it fails
+# it writes no output; either way `docs_only` is not 'true' and every step
+# runs. tools/ci_docs_only.py says which `.md` files count as code.
+#
+# Push runs are for `main` only: a PR's branch is checked by its pull_request
+# run, which is the run the ruleset's required checks read. Before roadmap 35
+# every PR branch push ran the whole workflow a second time.
+
 jobs:
+
+  # ── Docs-only detector (pull requests only) ─────────────────────────────────
+  changes:
+    name: Docs-only detector
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    outputs:
+      docs_only: ${{ steps.filter.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # the PR's base commit, not just its head
+
+      - id: filter
+        run: >-
+          python3 tools/ci_docs_only.py
+          "${{ github.event.pull_request.base.sha }}"
+          "${{ github.event.pull_request.head.sha }}"
+          >> "$GITHUB_OUTPUT"
 
   # ── Lint & Security ─────────────────────────────────────────────────────────
   lint:
     name: Lint & Security
+    needs: changes
+    if: always()   # also when `changes` was skipped (push, schedule) or failed: the full run
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -30,35 +70,48 @@ jobs:
         with:
           fetch-depth: 0   # gitleaks needs the PR base commit to diff on pull_request events
 
+      # Both lanes. Standard library, the runner's python3: needs no install.
+      - name: Roadmap numbers
+        run: python3 tools/check_roadmap_numbers.py
+
       - uses: actions/setup-python@v5
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           python-version: "3.12"
           cache: pip
 
       - name: Install tooling
+        if: needs.changes.outputs.docs_only != 'true'
         run: pip install ruff black bandit[toml] pip-audit
 
       - name: Install project deps
+        if: needs.changes.outputs.docs_only != 'true'
         run: pip install -r requirements.txt
 
       - name: Lint (ruff)
+        if: needs.changes.outputs.docs_only != 'true'
         run: ruff check app/
 
       - name: Format check (black)
+        if: needs.changes.outputs.docs_only != 'true'
         run: black --check app/
 
       - name: Lint Dockerfile (hadolint)
+        if: needs.changes.outputs.docs_only != 'true'
         uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: Dockerfile
           failure-threshold: error
 
       - name: SAST (bandit)
+        if: needs.changes.outputs.docs_only != 'true'
         run: bandit -r app/ -ll -x app/web/static
 
       - name: Dependency audit (pip-audit)
+        if: needs.changes.outputs.docs_only != 'true'
         run: pip-audit -r requirements.txt
 
+      # Both lanes.
       - name: Secret scan (gitleaks)
         uses: gitleaks/gitleaks-action@v3
         env:
@@ -67,6 +120,8 @@ jobs:
   # ── Tests ───────────────────────────────────────────────────────────────────
   test:
     name: Tests (Python ${{ matrix.python-version }})
+    needs: changes
+    if: always()   # also when `changes` was skipped or failed: the full run
     runs-on: ubuntu-latest
 
     strategy:
@@ -77,22 +132,32 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Docs lane only; pytest runs the same file in the full lane.
+      - name: Tests that read Markdown
+        if: needs.changes.outputs.docs_only == 'true'
+        run: python3 -m unittest -v tests/test_ci_tools.py
+
       - uses: actions/setup-python@v5
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install deps
+        if: needs.changes.outputs.docs_only != 'true'
         run: |
           pip install -r requirements.txt
           pip install pytest
 
       - name: Run smoke tests
+        if: needs.changes.outputs.docs_only != 'true'
         run: pytest tests/ -v
 
   # ── CodeQL ──────────────────────────────────────────────────────────────────
   codeql:
     name: CodeQL
+    needs: changes
+    if: always()   # also when `changes` was skipped or failed: the full run
     runs-on: ubuntu-latest
     # Code scanning (the upload) needs GitHub Advanced Security on a private repo,
     # so results are not uploaded: the job reads the SARIF itself and fails on any
@@ -103,20 +168,25 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        if: needs.changes.outputs.docs_only != 'true'
 
       - uses: github/codeql-action/init@v3
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           languages: python
 
       - uses: github/codeql-action/autobuild@v3
+        if: needs.changes.outputs.docs_only != 'true'
 
       - uses: github/codeql-action/analyze@v3
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           category: "/language:python"
           upload: never
           output: codeql-results
 
       - name: Fail on CodeQL findings
+        if: needs.changes.outputs.docs_only != 'true'
         # .github/codeql-accepted.json lists reviewed findings: rule + path, a
         # maximum count and the reason. One finding more than the maximum fails.
         run: |
@@ -150,14 +220,20 @@ jobs:
   docker:
     name: Docker Build & Scan
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [changes, lint, test]
+    # always() so a skipped `changes` (push) does not skip this job; it still waits for lint
+    # and test to SUCCEED, as before roadmap 35.
+    if: always() && needs.lint.result == 'success' && needs.test.result == 'success'
 
     steps:
       - uses: actions/checkout@v7
+        if: needs.changes.outputs.docs_only != 'true'
 
       - uses: docker/setup-buildx-action@v3
+        if: needs.changes.outputs.docs_only != 'true'
 
       - name: Build image
+        if: needs.changes.outputs.docs_only != 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -168,6 +244,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Scan for vulnerabilities (Trivy)
+        if: needs.changes.outputs.docs_only != 'true'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: happenhere:ci
@@ -181,7 +258,11 @@ jobs:
     name: Publish to GHCR
     runs-on: ubuntu-latest
     needs: docker
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    # Explicit, not the implicit success(): that also reads `changes`, an indirect dependency
+    # skipped on every push, and would skip this job on main. Same condition as before roadmap 35.
+    if: >-
+      always() && needs.docker.result == 'success' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
 
     permissions:
       contents: read

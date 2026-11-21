@@ -61,7 +61,9 @@ class RoadmapNumbers(unittest.TestCase):
         self.assertIn("table row", err)
 
     def test_one_row_and_one_heading_per_item_is_green(self):
-        text = ITEMS + "| 12 | 0 | one | DONE |\n| 13 | 1 | two | READY |\n\n### 12 — a\n### 13 — b\n"
+        text = (
+            ITEMS + "| 12 | 0 | one | DONE |\n| 13 | 1 | two | READY |\n\n### 12 — a\n### 13 — b\n"
+        )
         code, out, _ = self._check(text)
         self.assertEqual(code, 0)
         self.assertIn("2 item headings and 2 table rows", out)

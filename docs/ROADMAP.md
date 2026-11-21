@@ -21,9 +21,11 @@ item that is not READY.
 * **CI is the gate:** ruff, black, hadolint, bandit, pip-audit, gitleaks, pytest, CodeQL
   (blocking; reviewed exceptions in `.github/codeql-accepted.json`, each with a reason and the
   narrowest count) and the Docker build. `main` takes changes only through a PR with all of them
-  green.
+  green. A PR that changes prose Markdown only still reports every one of those checks, but skips
+  their heavy steps; the secret scan, the roadmap number check and the tests that read Markdown
+  still run (item 35).
 
-**Next free item number: 35.** Always re-read it here before filing.
+**Next free item number: 36.** Always re-read it here before filing.
 
 ## Items
 
@@ -63,6 +65,7 @@ item that is not READY.
 | 32 | 0 | One show listed in one batch under two venue NAMES of one venue (same title, exact start, same street address) is one event | **READY** |
 | 33 | 1 | Date-range filter on the events page and `/api/events` (`?from=` / `?to=`, whole local days) | **DONE** |
 | 34 | 0 | A re-scraped event's categories never reached its stored row: a row kept its first scrape's categories | **DONE** |
+| 35 | 2 | Docs-only PRs skip CI's heavy steps (every required check still reports); a duplicate-roadmap-number check | **READY** |
 
 ### 01 — Green CI and safety fixes — DONE
 
@@ -1645,3 +1648,47 @@ a scrape without categories keeps the row's; a merge never repeats a category.
 **Mutants** (each against the full suite, then reverted):
 * another source REPLACES instead of adding (`row.source_id == source_id` always true): 2 failed.
 * the repeat check compares with case: 1 failed (`test_a_merge_does_not_repeat_a_category`).
+
+### 35 — Docs-only PRs skip CI's heavy steps; a duplicate-roadmap-number check — READY
+
+**Why** (the owner's backlog, I295, 2026-11-21): a PR that changes only prose Markdown (a roadmap
+entry, a measurement write-up) ran the whole workflow, twice: the `pull_request` run and a `push`
+run of the PR's branch (`push: branches: ["**"]`), each with the install, lint, suite, CodeQL and
+image build. Docs PRs keep landing on their own and right away (the roadmap is the only number
+registry, so an item filed on an unmerged branch is invisible to the next session); CI makes them
+cheap instead. And nothing checked that two roadmap items do not share a number.
+
+**Spec.**
+* A `changes` job ("Docs-only detector") runs on `pull_request` only and sets `docs_only=true`
+  only when every file in the PR's diff ends in `.md` and none is a `.md` that code, a test or
+  the build reads (`tools/ci_docs_only.py`). Fail open: an empty diff, a failed diff or a skipped
+  detector means the full run.
+* The four required jobs (Lint & Security, Tests (Python 3.12), CodeQL, Docker Build & Scan) keep
+  their names, run on every PR and report; each is `if: always()` and only its heavy steps carry
+  `if: needs.changes.outputs.docs_only != 'true'`. No `paths-ignore`, no `[skip ci]`.
+* Still run in the docs lane: the gitleaks secret scan, the roadmap number check, and the tests
+  that read Markdown (`tests/test_ci_tools.py`, with the runner's `python3`).
+* A push to `main` (and the weekly schedule) runs in full. Push runs are for `main` only; a PR's
+  branch is checked by its `pull_request` run, which is what the ruleset's required checks read.
+* `tools/check_roadmap_numbers.py` fails when two item headings (`### 07 — …`) or two rows of the
+  Items table carry the same number. `07` and `7` are the same item; `288d` and `129-Q1` are
+  distinct from `288` and `129`. It runs in both lanes. `main` had no duplicates when this item
+  measured it (34 headings, 34 rows), so its allowlist is empty.
+
+**Markdown that code reads** (grep of `app/`, `tests/`, `scripts/`, `.github/`, the Dockerfile,
+`pyproject.toml` and `.gitleaks.toml` for `.md`, README, ROADMAP and `glob(`):
+`app/geodata/SOURCE.md` (read by `tests/test_search_locations.py`, and copied into the image with
+`app/`). Every `.md` under `app/`, `tests/`, `scripts/`, `tools/` and `.github/` counts as code.
+`docs/ROADMAP.md` is read by the number check and its test, both of which run in the docs lane.
+`CLAUDE.md` is named in `.gitleaks.toml`'s allowlist; gitleaks runs in both lanes.
+
+**Failing first:** `tests/test_ci_tools.py` against `origin/main` (no `tools/`): the module fails
+to import (`FileNotFoundError: tools/check_roadmap_numbers.py`), so every test errors.
+
+**Mutants** (each against `python3 -m unittest tests/test_ci_tools.py`, then reverted; all red):
+* duplicates never reported: 4 failed. Sub-letter dropped from the key: 2. Table rows counted
+  outside `## Items`: 2, one of them the real roadmap (its measurement tables reuse numbers). A
+  file with no item passes: 1. A leading zero kept (`01` ≠ `1`): 1.
+* detector: an empty diff is docs-only: 2. `CODE_DIRS` ignored: 5 subtests. The `.md` suffix rule
+  ignored: 3 tests. Renames followed (`--no-renames` dropped, a `.py` renamed to `.md`): 1. A
+  two-dot diff (a `main` commit the branch lacks counted): 1.
