@@ -74,7 +74,7 @@ jobs:
       - name: Roadmap numbers
         run: python3 tools/check_roadmap_numbers.py
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: needs.changes.outputs.docs_only != 'true'
         with:
           python-version: "3.12"
@@ -137,7 +137,7 @@ jobs:
         if: needs.changes.outputs.docs_only == 'true'
         run: python3 -m unittest -v tests/test_ci_tools.py
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: needs.changes.outputs.docs_only != 'true'
         with:
           python-version: ${{ matrix.python-version }}
