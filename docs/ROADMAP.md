@@ -1701,3 +1701,14 @@ docs-only PR, which proves the docs lane).
 * **#57 ran only its `pull_request` run**, with no second `push` run of the branch, and came up
   mergeable on it. The `push` run on `main` after the merge skipped the detector and ran in full:
   every job green, and Publish to GHCR ran as before.
+* **The docs lane, measured on #58** (its first push, run 44937258511, GitHub-hosted runners): all
+  five jobs `success`, Publish skipped as on every PR. **31 s** from created to completed. Detector
+  4 s; Lint & Security 12 s (checkout, roadmap numbers, gitleaks; 8 steps skipped, among them
+  setup-python, the installs, ruff, black, hadolint, bandit and pip-audit); Tests 5 s (the 22
+  Markdown-reading tests by `unittest`; setup-python, install and pytest skipped); CodeQL 4 s and
+  Docker Build & Scan 7 s (every step skipped).
+* **Before, on #53** (the last docs-only PR before #57, `docs/ROADMAP.md` only): its
+  `pull_request` run 42874689819 took **122 s** (Lint 40 s, Tests 60 s, CodeQL 69 s, Docker 54 s),
+  and the `push` run of its branch on the same SHA (42874680107) took **179 s** more in parallel
+  (CodeQL 175 s). That is about 556 job-seconds, against 32 now. One run of each, so these are
+  anecdotes of the size of the saving, not a distribution.
